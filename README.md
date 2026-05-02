@@ -55,7 +55,8 @@ my-repo/
 │   │   └── output/            ← deck.pptx
 │   └── post-launch/           ← slug 2 (a blog)
 │       ├── SCOPE.md  ...
-│       └── workspace/draft.md
+│       ├── workspace/draft.md   ← (rooted at .spear/post-launch/workspace/)
+│       └── ...
 ```
 
 Single-slug repos auto-resolve. Multi-slug repos require `--name <slug>` (or `SPEAR_PROJECT=<slug>`).
@@ -112,13 +113,13 @@ $ spear scope                 # exit 0 = ready to plan
 $ spear plan                  # exit 0 = ready to execute
 ✓ PLAN.md is valid.
 
-# Claude generates workspace/deck/build.js
+# Claude generates .spear/<slug>/workspace/deck/build.js
 $ spear execute               # node build.js + LibreOffice render
 ✓ Execute complete.
-  ✓ workspace/deck/build.js exists
+  ✓ .spear/<slug>/workspace/deck/build.js exists
   ✓ npm install
   ✓ node build.js
-  ✓ output/deck.pptx exists
+  ✓ .spear/<slug>/output/deck.pptx exists
   ✓ libreoffice available
   ✓ pptx → pdf
   ✓ pdf → jpegs
@@ -129,7 +130,7 @@ $ spear assess --json
   "round": 1,
   "defects": [
     { "unit": "Slide 1", "metric": "rubric", "mechanical": false,
-      "description": "Score against ASSESS.md (read workspace/qa/v-01.jpg)" },
+      "description": "Score against ASSESS.md (read .spear/<slug>/workspace/qa/v-01.jpg)" },
     ...
   ],
   "converged": false

@@ -40,7 +40,7 @@ $ spear plan                         # fails: PLAN.md not approved
 # Claude writes PLAN.md based on SCOPE.md, shows it to you
 # You mark [x] User confirmed
 $ spear plan                         # exit 0 = ready
-# Claude generates workspace/deck/build.js
+# Claude generates .spear/<slug>/workspace/deck/build.js
 $ spear loop --json --max-rounds 1   # one round
 # CLI returns structured JSON of defects
 # Claude reads each Slide N JPEG via the Read tool
