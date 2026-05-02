@@ -8,8 +8,9 @@
  *
  * Exits 0 if valid, 1 if not. Always writes a status block.
  */
+import path from 'path';
 import kleur from 'kleur';
-import { readMd, readState, resolveSlug, writeState } from '../state.js';
+import { readMd, readState, resolveSlug, specPath, writeState } from '../state.js';
 
 const REQUIRED_SECTIONS = ['Goal', 'Audience', 'Inputs', 'Constraints', 'Done means'];
 
@@ -22,9 +23,10 @@ interface ScopeReport {
 
 export async function scopeCmd(opts: { json?: boolean; name?: string }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
+  const scopeRel = path.relative(process.cwd(), specPath(slug, 'scope'));
   const md = await readMd(slug, 'scope');
   if (md === null) {
-    fail(`SCOPE.md not found for "${slug}". Run \`spear init <type> ${slug}\` first.`, opts);
+    fail(`${scopeRel} not found. Run \`spear init <type> ${slug}\` first.`, opts);
     return;
   }
 
@@ -34,7 +36,7 @@ export async function scopeCmd(opts: { json?: boolean; name?: string }): Promise
   if (opts.json) {
     console.log(JSON.stringify(report, null, 2));
   } else {
-    print(report);
+    print(report, scopeRel);
   }
 
   process.exit(report.valid ? 0 : 1);
@@ -119,13 +121,13 @@ async function persistRound(slug: string, report: ScopeReport): Promise<void> {
   await writeState(slug, state);
 }
 
-function print(report: ScopeReport): void {
+function print(report: ScopeReport, scopeRel: string): void {
   if (report.valid) {
-    console.log(kleur.green('✓ SCOPE.md is valid.'));
+    console.log(kleur.green(`✓ ${scopeRel} is valid.`));
     console.log(kleur.dim(`  MAX_ROUNDS = ${report.maxRounds}`));
     return;
   }
-  console.log(kleur.red('✗ SCOPE.md has gaps:'));
+  console.log(kleur.red(`✗ ${scopeRel} has gaps:`));
   for (const s of report.missingSection) {
     console.log(`  - missing section: ${kleur.cyan(s)}`);
   }
@@ -133,7 +135,7 @@ function print(report: ScopeReport): void {
     console.log(`  - section unfilled (still has placeholder): ${kleur.cyan(s)}`);
   }
   console.log();
-  console.log(kleur.dim('Fix SCOPE.md, then re-run `spear scope`.'));
+  console.log(kleur.dim(`Fix ${scopeRel}, then re-run \`spear scope\`.`));
 }
 
 function fail(msg: string, opts: { json?: boolean }): void {
