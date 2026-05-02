@@ -12,10 +12,12 @@
  */
 import path from 'path';
 import kleur from 'kleur';
+import { existsSync, readFileSync } from 'fs';
 import {
   atomicWrite,
   checkApprovalGate,
   ensureRoundDir,
+  readMd,
   readState,
   resolveSlug,
   roundDir,
@@ -24,9 +26,10 @@ import {
 } from '../state.js';
 import { buildContext, getAdapter } from '../adapters/index.js';
 import { persistEvidence } from '../evidence.js';
+import { buildGraderPrompt, graderToEvidence, runGrader } from '../grader.js';
 import type { AssessResult } from '../types.js';
 
-export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string; skipApproval?: boolean }): Promise<void> {
+export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string; skipApproval?: boolean; grader?: string }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
   const startedAt = Date.now();
@@ -46,6 +49,50 @@ export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: s
   const adapter = getAdapter(state.type);
   const ctx = buildContext(slug, state.type, cwd);
   const { defects, evidence } = await adapter.assess(ctx, { fast: !!opts.fast });
+
+  // Sub-agent grader: run the subjective grading in a fresh subprocess with
+  // an adversarial prompt, separate from the drafting context. Solves the
+  // rubber-stamp problem structurally (the drafting LLM never sees the
+  // grader's prompt or scoring reasoning).
+  if (opts.grader) {
+    try {
+      const rubricMd = await readMd(slug, 'assess', cwd);
+      if (!rubricMd) throw new Error(`ASSESS.md not found for "${slug}"`);
+      const artifactPath = resolveArtifactPath(state.type, ctx);
+      if (!artifactPath) {
+        console.error(kleur.yellow(`⚠ --grader: adapter "${state.type}" does not yet support sub-agent grading; skipping`));
+      } else if (!existsSync(artifactPath)) {
+        console.error(kleur.yellow(`⚠ --grader: artifact not found at ${path.relative(cwd, artifactPath)}; skipping`));
+      } else {
+        const artifactText = readFileSync(artifactPath, 'utf-8');
+        const prompt = buildGraderPrompt({
+          rubricMd,
+          artifactText,
+          artifactName: path.relative(cwd, artifactPath),
+          artifactType: state.type,
+        });
+        if (!opts.json) {
+          console.log(kleur.dim(`→ running grader (${opts.grader})...`));
+        }
+        const result = await runGrader({ cmd: opts.grader, prompt });
+        const { evidence: graderEv, defects: graderDef } = graderToEvidence(result.output);
+        evidence.push(...graderEv);
+        defects.push(...graderDef);
+        if (!opts.json) {
+          console.log(
+            kleur.dim(
+              `  grader returned ${result.output.metrics.length} metric scores ` +
+                `+ ${result.output.failure_modes.filter((f) => f.open).length} open failure modes ` +
+                `in ${result.durationMs}ms`,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      console.error(kleur.red(`✗ grader failed: ${(e as Error).message}`));
+      console.error(kleur.dim('  Continuing with adapter-only assessment.'));
+    }
+  }
 
   const round = state.round + 1;
   const timestamp = new Date().toISOString();
@@ -202,6 +249,22 @@ function reportTemplate(result: AssessResult): string {
     '',
     'When the rubric is satisfied, add `<spear-complete/>` on its own line above the report block to stop the loop.',
   ].join('\n');
+}
+
+/**
+ * Where the primary text artifact lives, per adapter. The grader inlines this
+ * file's contents into the prompt. Returns null if the adapter doesn't have
+ * a single text artifact (e.g., deck — multiple JPEGs — needs a different
+ * grading flow that's not implemented yet).
+ */
+function resolveArtifactPath(type: string, ctx: { workspaceDir: string }): string | null {
+  switch (type) {
+    case 'blog':    return path.join(ctx.workspaceDir, 'draft.md');
+    case 'generic': return null;  // generic has multiple files; no canonical single artifact
+    case 'code':    return null;  // code grader would scan source — not v1
+    case 'deck':    return null;  // deck grader needs JPEG vision — not v1
+    default:        return null;
+  }
 }
 
 function resolveSlugOrExit(opts: { name?: string }): string {

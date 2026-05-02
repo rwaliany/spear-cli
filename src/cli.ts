@@ -63,6 +63,7 @@ program
   .option('--json', 'emit JSON defect list')
   .option('--fast', 'mechanical checks only (skip subjective items deferred to LLM)')
   .option('--skip-approval', 'bypass the gated approval check (for --gated projects)')
+  .option('--grader <cmd>', 'run subjective grading in a fresh subprocess (e.g., "claude -p"); blog adapter only in v0.3')
   .action(assessCmd);
 
 program

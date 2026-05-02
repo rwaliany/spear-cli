@@ -379,7 +379,50 @@ sed -i.bak 's/\[ \] User confirmed/[x] User confirmed/g' "$NONGATED/.spear/post/
 (cd "$NONGATED" && run plan >/dev/null 2>&1) && ok "ungated project: plan runs without approve (back-compat)" || ko "ungated: plan broke"
 
 # ---------------------------------------------------------------------------
-section "16. Dogfood — spear init code self on spear-cli itself"
+section "16. Sub-agent grader (--grader cmd, blog adapter)"
+# ---------------------------------------------------------------------------
+GRD="$TMP/grader"
+mkdir -p "$GRD"
+(cd "$GRD" && run init blog post >/dev/null 2>&1)
+printf '%s\n' "$FILLED_SCOPE" > "$GRD/.spear/post/SCOPE.md"
+mkdir -p "$GRD/.spear/post/workspace" && echo "# stub" > "$GRD/.spear/post/workspace/draft.md"
+(cd "$GRD" && run scope >/dev/null 2>&1)
+
+# Fake grader: deterministic output for testing the parse + merge logic
+FAKE_GRADER="$TMP/fake-grader.sh"
+cat > "$FAKE_GRADER" <<'EOF'
+#!/bin/bash
+cat > /dev/null
+echo "<spear-grade>"
+echo '{"metrics":[{"id":"M1","score":7,"evidence":"thin","below_10_reason":"weak"},{"id":"M2","score":10,"evidence":"good"}],"failure_modes":[{"letter":"F","open":true,"evidence":"filler"}]}'
+echo "</spear-grade>"
+EOF
+chmod +x "$FAKE_GRADER"
+
+GRD_OUT=$(cd "$GRD" && run assess --grader "$FAKE_GRADER" --json 2>&1)
+GRD_METRICS=$(echo "$GRD_OUT" | jq '[.evidence[] | select(.id | startswith("grader.metric"))] | length' 2>/dev/null)
+GRD_FAILURES=$(echo "$GRD_OUT" | jq '[.evidence[] | select(.id | startswith("grader.failure-mode"))] | length' 2>/dev/null)
+[ "$GRD_METRICS" = "2" ] && ok "grader: 2 metric evidence rows merged into assess output" || ko "grader metrics=$GRD_METRICS (expected 2)"
+[ "$GRD_FAILURES" = "1" ] && ok "grader: 1 open failure-mode merged" || ko "grader failures=$GRD_FAILURES (expected 1)"
+
+# A score below 10 should produce a defect
+GRD_DEFS=$(echo "$GRD_OUT" | jq '[.defects[] | select(.metric | startswith("grader/"))] | length' 2>/dev/null)
+[ "$GRD_DEFS" = "1" ] && ok "grader: M1=7 produced 1 grader-derived defect" || ko "grader defects=$GRD_DEFS (expected 1 from M1=7)"
+
+# Grader command failure shouldn't crash assess — should warn (to stderr) and continue with valid JSON on stdout
+BAD_OUT=$(cd "$GRD" && run assess --grader "/no/such/binary" --json 2>/dev/null)
+echo "$BAD_OUT" | jq '.evidence | length' >/dev/null 2>&1 && ok "grader failure doesn't crash assess (continues with adapter-only)" || ko "grader failure crashed assess"
+
+# Adapter without grader support should warn
+GRD_C="$TMP/grader-code"
+mkdir -p "$GRD_C"
+(cd "$GRD_C" && run init code >/dev/null 2>&1)
+printf '%s\n' "$FILLED_SCOPE" > "$GRD_C/.spear/code/SCOPE.md"
+WARN_OUT=$(cd "$GRD_C" && run assess --grader "$FAKE_GRADER" 2>&1 || true)
+echo "$WARN_OUT" | grep -q "does not yet support sub-agent grading" && ok "grader warns when adapter unsupported (e.g., code)" || ko "no warning for unsupported adapter"
+
+# ---------------------------------------------------------------------------
+section "17. Dogfood — spear init code self on spear-cli itself"
 # ---------------------------------------------------------------------------
 DF="$TMP/dogfood-spear-cli"
 cp -r "$REPO_ROOT" "$DF"
