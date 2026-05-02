@@ -12,7 +12,6 @@
  */
 import path from 'path';
 import kleur from 'kleur';
-import { existsSync, readFileSync } from 'fs';
 import {
   atomicWrite,
   checkApprovalGate,
@@ -26,10 +25,17 @@ import {
 } from '../state.js';
 import { buildContext, getAdapter } from '../adapters/index.js';
 import { persistEvidence } from '../evidence.js';
-import { buildGraderPrompt, graderToEvidence, runGrader } from '../grader.js';
+import { buildGraderPromptFromFiles, graderToEvidence, resolveGraderFiles, runGrader } from '../grader.js';
 import type { AssessResult } from '../types.js';
 
-export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string; skipApproval?: boolean; grader?: string }): Promise<void> {
+export async function assessCmd(opts: {
+  json?: boolean;
+  fast?: boolean;
+  name?: string;
+  skipApproval?: boolean;
+  grader?: string;
+  gradeFiles?: string;
+}): Promise<void> {
   const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
   const startedAt = Date.now();
@@ -58,21 +64,31 @@ export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: s
     try {
       const rubricMd = await readMd(slug, 'assess', cwd);
       if (!rubricMd) throw new Error(`ASSESS.md not found for "${slug}"`);
-      const artifactPath = resolveArtifactPath(state.type, ctx);
-      if (!artifactPath) {
-        console.error(kleur.yellow(`⚠ --grader: adapter "${state.type}" does not yet support sub-agent grading; skipping`));
-      } else if (!existsSync(artifactPath)) {
-        console.error(kleur.yellow(`⚠ --grader: artifact not found at ${path.relative(cwd, artifactPath)}; skipping`));
+
+      // File list comes from --grade-files override OR adapter's default
+      let filePaths: string[];
+      if (opts.gradeFiles && opts.gradeFiles.trim()) {
+        filePaths = opts.gradeFiles.split(',').map((s) => s.trim()).filter(Boolean);
+      } else if (adapter.defaultGraderArtifacts) {
+        filePaths = adapter.defaultGraderArtifacts(ctx);
       } else {
-        const artifactText = readFileSync(artifactPath, 'utf-8');
-        const prompt = buildGraderPrompt({
+        filePaths = [];
+      }
+
+      if (filePaths.length === 0) {
+        console.error(kleur.yellow(
+          `⚠ --grader: no artifact files to grade. Pass --grade-files <path,path,...> or ensure the adapter has produced output.`,
+        ));
+      } else {
+        const files = resolveGraderFiles(filePaths, cwd);
+        const prompt = buildGraderPromptFromFiles({
           rubricMd,
-          artifactText,
-          artifactName: path.relative(cwd, artifactPath),
+          files,
+          cwd,
           artifactType: state.type,
         });
         if (!opts.json) {
-          console.log(kleur.dim(`→ running grader (${opts.grader})...`));
+          console.log(kleur.dim(`→ running grader (${opts.grader}) on ${files.length} file(s)...`));
         }
         const result = await runGrader({ cmd: opts.grader, prompt });
         const { evidence: graderEv, defects: graderDef } = graderToEvidence(result.output);
@@ -249,22 +265,6 @@ function reportTemplate(result: AssessResult): string {
     '',
     'When the rubric is satisfied, add `<spear-complete/>` on its own line above the report block to stop the loop.',
   ].join('\n');
-}
-
-/**
- * Where the primary text artifact lives, per adapter. The grader inlines this
- * file's contents into the prompt. Returns null if the adapter doesn't have
- * a single text artifact (e.g., deck — multiple JPEGs — needs a different
- * grading flow that's not implemented yet).
- */
-function resolveArtifactPath(type: string, ctx: { workspaceDir: string }): string | null {
-  switch (type) {
-    case 'blog':    return path.join(ctx.workspaceDir, 'draft.md');
-    case 'generic': return null;  // generic has multiple files; no canonical single artifact
-    case 'code':    return null;  // code grader would scan source — not v1
-    case 'deck':    return null;  // deck grader needs JPEG vision — not v1
-    default:        return null;
-  }
 }
 
 function resolveSlugOrExit(opts: { name?: string }): string {

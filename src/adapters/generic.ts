@@ -82,6 +82,13 @@ export const genericAdapter: Adapter = {
 
     return { defects, evidence };
   },
+
+  defaultGraderArtifacts(ctx: AdapterContext): string[] {
+    if (!existsSync(ctx.workspaceDir)) return [];
+    const rels: string[] = [];
+    walk(ctx.workspaceDir, ctx.workspaceDir, rels);
+    return rels.map((rel) => path.join(ctx.workspaceDir, rel));
+  },
 };
 
 function walk(root: string, dir: string, out: string[]): void {

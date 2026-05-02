@@ -194,6 +194,15 @@ export const deckAdapter: Adapter = {
 
     return { defects, evidence };
   },
+
+  defaultGraderArtifacts(ctx: AdapterContext): string[] {
+    const qaDir = path.join(ctx.workspaceDir, 'qa');
+    if (!existsSync(qaDir)) return [];
+    return readdirSync(qaDir)
+      .filter((f) => /^v-\d+\.jpg$/.test(f))
+      .sort()
+      .map((f) => path.join(qaDir, f));
+  },
 };
 
 function findSoffice(): string | null {

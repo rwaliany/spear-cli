@@ -164,4 +164,9 @@ export const blogAdapter: Adapter = {
 
     return { defects, evidence };
   },
+
+  defaultGraderArtifacts(ctx: AdapterContext): string[] {
+    const draft = path.join(ctx.workspaceDir, DRAFT_NAME);
+    return existsSync(draft) ? [draft] : [];
+  },
 };

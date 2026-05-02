@@ -413,13 +413,34 @@ GRD_DEFS=$(echo "$GRD_OUT" | jq '[.defects[] | select(.metric | startswith("grad
 BAD_OUT=$(cd "$GRD" && run assess --grader "/no/such/binary" --json 2>/dev/null)
 echo "$BAD_OUT" | jq '.evidence | length' >/dev/null 2>&1 && ok "grader failure doesn't crash assess (continues with adapter-only)" || ko "grader failure crashed assess"
 
-# Adapter without grader support should warn
+# Code adapter: grader works on source files (uses Read-tool mode automatically)
 GRD_C="$TMP/grader-code"
-mkdir -p "$GRD_C"
+mkdir -p "$GRD_C/src" && echo "export const x = 1;" > "$GRD_C/src/foo.ts"
 (cd "$GRD_C" && run init code >/dev/null 2>&1)
 printf '%s\n' "$FILLED_SCOPE" > "$GRD_C/.spear/code/SCOPE.md"
-WARN_OUT=$(cd "$GRD_C" && run assess --grader "$FAKE_GRADER" 2>&1 || true)
-echo "$WARN_OUT" | grep -q "does not yet support sub-agent grading" && ok "grader warns when adapter unsupported (e.g., code)" || ko "no warning for unsupported adapter"
+GRD_C_OUT=$(cd "$GRD_C" && run assess --grader "$FAKE_GRADER" --json 2>&1 || true)
+echo "$GRD_C_OUT" | jq -e '[.evidence[] | select(.id | startswith("grader.metric"))] | length > 0' >/dev/null && \
+  ok "code adapter supports grader (uses default source files)" || ko "code adapter grader broke"
+
+# --grade-files override accepts arbitrary paths (e.g., images)
+GRD_OVERRIDE="$TMP/grader-override"
+mkdir -p "$GRD_OVERRIDE"
+(cd "$GRD_OVERRIDE" && run init blog post >/dev/null 2>&1)
+printf '%s\n' "$FILLED_SCOPE" > "$GRD_OVERRIDE/.spear/post/SCOPE.md"
+mkdir -p "$GRD_OVERRIDE/.spear/post/workspace" && echo "stub" > "$GRD_OVERRIDE/.spear/post/workspace/draft.md"
+echo "fake jpeg" > "$GRD_OVERRIDE/test.jpg"
+(cd "$GRD_OVERRIDE" && run scope >/dev/null 2>&1)
+# Capture the prompt the grader sees by using a recorder script
+PROMPT_RECORDER="$TMP/recorder.sh"
+cat > "$PROMPT_RECORDER" <<'EOF'
+#!/bin/bash
+cat > /tmp/spear-test-recorded-prompt.txt
+echo '<spear-grade>{"metrics":[],"failure_modes":[]}</spear-grade>'
+EOF
+chmod +x "$PROMPT_RECORDER"
+(cd "$GRD_OVERRIDE" && run assess --grader "$PROMPT_RECORDER" --grade-files test.jpg --json >/dev/null 2>&1) || true
+grep -q "Read tool" /tmp/spear-test-recorded-prompt.txt && grep -q "test.jpg" /tmp/spear-test-recorded-prompt.txt && \
+  ok "--grade-files override: image path triggers Read-tool mode" || ko "--grade-files override broken"
 
 # ---------------------------------------------------------------------------
 section "17. Dogfood — spear init code self on spear-cli itself"

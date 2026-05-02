@@ -45,6 +45,16 @@ export interface AdapterContext {
 export interface Adapter {
   execute(ctx: AdapterContext): Promise<ExecuteResult>;
   assess(ctx: AdapterContext, opts: { fast: boolean }): Promise<AssessOutput>;
+  /**
+   * Default file list for the sub-agent grader (`spear assess --grader <cmd>`).
+   * Returns absolute paths of artifacts to grade. The CLI passes these to the
+   * generic grader prompt builder, which auto-decides inline-vs-Read-tool
+   * based on file types and sizes.
+   *
+   * Returns [] (or null) if the project has no gradeable artifact yet.
+   * Users can always override the defaults with `--grade-files <path,path,...>`.
+   */
+  defaultGraderArtifacts?(ctx: AdapterContext): string[];
 }
 
 const adapters: Record<string, Adapter> = {

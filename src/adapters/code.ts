@@ -127,6 +127,10 @@ export const codeAdapter: Adapter = {
 
     return { defects, evidence };
   },
+
+  defaultGraderArtifacts(ctx: AdapterContext): string[] {
+    return listSourceFiles(ctx.workspaceDir);
+  },
 };
 
 function listSourceFiles(root: string, dir = root, out: string[] = []): string[] {
