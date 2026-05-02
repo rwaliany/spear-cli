@@ -243,13 +243,17 @@ export function listApprovals(slug: string, cwd: string = process.cwd()): Phase[
  *
  *   plan    requires approval of scope
  *   execute requires approval of plan
- *   assess  requires approval of execute
+ *
+ * Execute and assess are intentionally a single atomic unit — once plan is
+ * approved, the autonomous execute/assess loop runs to convergence (or
+ * MAX_ROUNDS) without further human intervention. The next human checkpoint
+ * is `spear resolve`, which renders a closeout report for review before
+ * merge / publish.
  */
 export function requiredUpstreamApproval(forPhase: Phase): Phase | null {
   switch (forPhase) {
     case 'plan': return 'scope';
     case 'execute': return 'plan';
-    case 'assess': return 'execute';
     default: return null;
   }
 }

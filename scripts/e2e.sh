@@ -361,6 +361,12 @@ echo "$EXEC_OUT" | grep -q 'requires approval of "plan"' && ok "gated: execute r
 # --skip-approval should bypass
 (cd "$GATED" && run execute --skip-approval >/dev/null 2>&1) && ok "--skip-approval bypasses the gate" || ko "--skip-approval failed"
 
+# Assess does NOT require approval (execute + assess are one autonomous unit)
+ASSESS_OUT=$(cd "$GATED" && run assess --json 2>&1 || true)
+echo "$ASSESS_OUT" | jq -e '.evidence | length > 0' >/dev/null 2>&1 && \
+  ok "gated: assess runs without approve execute (autonomous loop)" || \
+  ko "gated: assess incorrectly gated"
+
 # spear approve --list shows what's approved
 LIST_OUT=$(cd "$GATED" && run approve --list 2>&1)
 echo "$LIST_OUT" | grep -q "✓ scope" && ok "spear approve --list shows recorded approvals" || ko "approve --list broken"
