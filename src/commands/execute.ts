@@ -3,7 +3,7 @@
  * Per-artifact-type adapters define exactly which commands to run.
  */
 import kleur from 'kleur';
-import { readState, resolveSlug, writeState } from '../state.js';
+import { phaseAtLeast, readState, resolveSlug, writeState } from '../state.js';
 import { buildContext, getAdapter } from '../adapters/index.js';
 
 export async function executeCmd(opts: { json?: boolean; name?: string }): Promise<void> {
@@ -11,6 +11,15 @@ export async function executeCmd(opts: { json?: boolean; name?: string }): Promi
   const state = await readState(slug);
   if (!state) {
     fail(`No SPEAR project "${slug}" found. Run \`spear init <type> ${slug}\` first.`, opts);
+    return;
+  }
+
+  if (!phaseAtLeast(state.phase, 'execute')) {
+    fail(
+      `Cannot execute: state.phase = "${state.phase}". Run \`spear scope\` and \`spear plan\` first ` +
+        `(both must pass) before \`spear execute\`.`,
+      opts,
+    );
     return;
   }
 

@@ -172,6 +172,20 @@ export async function writeMd(
   await fs.rename(tmp, p);
 }
 
+const PHASE_ORDER: SpearState['phase'][] = ['scope', 'plan', 'execute', 'assess', 'resolve', 'converged'];
+
+/**
+ * Hard phase-gate check. Returns true if `current` is at or beyond `required`.
+ * Use to refuse downstream commands when upstream phases haven't passed.
+ *
+ *   phaseAtLeast('plan', 'execute')  → false (execute hasn't been reached yet)
+ *   phaseAtLeast('execute', 'execute') → true
+ *   phaseAtLeast('converged', 'assess') → true
+ */
+export function phaseAtLeast(current: SpearState['phase'], required: SpearState['phase']): boolean {
+  return PHASE_ORDER.indexOf(current) >= PHASE_ORDER.indexOf(required);
+}
+
 export async function ensureRoundDir(slug: string, round: number, cwd: string = process.cwd()): Promise<string> {
   const dir = roundDir(slug, round, cwd);
   await fs.mkdir(path.join(dir, 'evidence'), { recursive: true });

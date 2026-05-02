@@ -65,6 +65,36 @@ S. **State corruption on Ctrl-C** — Kill a long-running command mid-write; `st
 
 T. **Exit code drift** — A command returns the wrong exit code for its semantic (e.g., `spear assess` exits 0 with open defects). Each command's exit table must match the documented contract.
 
+U. **Empty-state crash** — Running any command in a fresh repo (no `.spear/`, no init) crashes (uncaught exception, ENOENT, parse error) instead of erroring cleanly with a "No SPEAR project found. Run `spear init`" message.
+
+V. **State-corruption crash** — Manually corrupting `.spear/<slug>/state.json` (truncated, invalid JSON, missing required fields) crashes commands instead of erroring with an actionable message ("state.json malformed; delete and re-run init").
+
+W. **Slug edge cases** — Slugs containing unicode, hyphens-and-underscores in unusual positions, single character names, names that match reserved filesystem words (CON, PRN on Windows), or extremely long names crash, collide, or produce malformed paths. The slug regex must reject all of these consistently.
+
+X. **--json malformed for any command** — Some `--json` output isn't parseable by `jq .`. Test: pipe every `--json` flag through jq and assert exit 0.
+
+Y. **Phase-gate skip** — `spear execute` runs (and possibly succeeds) even though `spear plan` exits 1 (PLAN.md unapproved). The CLI should refuse to advance past a failing gate. Today this is soft (relies on adapter failure); should be hard.
+
+Z. **Big-input regression** — A 1MB SCOPE.md, a 200-row defect list, or 50+ evidence rows causes hangs, OOM, or truncated output. Performance degrades but doesn't fail.
+
+AA. **Cross-slug interference** — A command run with `--name foo` reads/writes paths for `bar`, OR a multi-slug runner aggregation mixes data between slugs. Test: two slugs with conflicting state, run commands on each, verify isolation.
+
+BB. **Resume-after-kill corruption** — `kill -9` (or Ctrl-C) mid-assess leaves `.spear/<slug>/state.json` in an invalid state (partial JSON, leftover .tmp file that confuses next read). The atomic-write contract must hold under signal.
+
+CC. **Evidence artifact path drift** — `evidence.json` references an artifact path that doesn't exist (or has a different hash than recorded) on the same filesystem at re-read time. The persisted artifacts under `.spear/<slug>/rounds/N/evidence/` must round-trip.
+
+DD. **Help-source flag drift** — A flag exists in the cli.ts registration but isn't documented in `--help` text, OR vice-versa. Stricter than F (which only checks for descriptions): every flag in source has a help line and every help line corresponds to a real flag.
+
+EE. **Doc code-example failure** — A bash example in README.md or docs/*.md, when actually executed, fails or produces different output than shown. Documentation drifts from code over time; this catches it.
+
+FF. **Fresh-clone install break** — `git clone` + `npm install` + `npm run build` + `bash scripts/e2e.sh` doesn't pass on a fresh checkout (missing dep, .gitignore-leaked file required, hardcoded path, etc.).
+
+GG. **Dependency hygiene** — `npm audit` flags a high/critical vulnerability, OR `npm outdated` shows a major version stale on a security-sensitive package, OR a transitive dep is GPL/copyleft (license incompatible with Apache-2.0).
+
+HH. **Cross-platform path bug** — Code uses hardcoded `/` separators or POSIX-only behavior that breaks on Windows. Less critical for v0.2 (we declare Mac/Linux primary), but should be flagged where present.
+
+II. **Evidence-emission gap** — An adapter emits zero Evidence rows in some code path (e.g., when defects.length === 0, or when fast=true). The contract says every assess emits evidence; flag any path that doesn't.
+
 ## Convergence
 
 PASS when every metric 10/10 AND zero open lettered failure modes AND `<spear-complete/>` signal in RESOLVE.md.

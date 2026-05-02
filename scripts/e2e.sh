@@ -118,17 +118,31 @@ printf '%s\n' "$FILLED_SCOPE" > "$D/.spear/blog/SCOPE.md"
 [ $PE -ne 0 ] && ok "plan rejects unapproved PLAN.md (exit $PE)" || ko "plan accepted unapproved PLAN.md"
 
 # ---------------------------------------------------------------------------
-section "5. Adapter execute"
+section "5. Adapter execute (gated by phase: requires scope + plan)"
 # ---------------------------------------------------------------------------
+# Generic execute needs the full prelude: filled scope + approved plan
 G="$TMP/init-generic"
+printf '%s\n' "$FILLED_SCOPE" > "$G/.spear/generic/SCOPE.md"
+sed -i.bak 's/\[ \] User confirmed/[x] User confirmed/g' "$G/.spear/generic/PLAN.md" && rm -f "$G/.spear/generic/PLAN.md.bak"
+(cd "$G" && run scope >/dev/null 2>&1)
+(cd "$G" && run plan >/dev/null 2>&1)
 mkdir -p "$G/.spear/generic/workspace" && echo "content" > "$G/.spear/generic/workspace/file.txt"
-(cd "$G" && run execute --json >/dev/null 2>&1); [ $? -eq 0 ] && ok "generic execute succeeds" || ko "generic execute failed"
+(cd "$G" && run execute --json >/dev/null 2>&1); [ $? -eq 0 ] && ok "generic execute succeeds (after scope + plan)" || ko "generic execute failed"
 
+# Blog: same prelude. $D is from §3/§4 — already has filled scope, but plan still unapproved.
+sed -i.bak 's/\[ \] User confirmed/[x] User confirmed/g' "$D/.spear/blog/PLAN.md" && rm -f "$D/.spear/blog/PLAN.md.bak"
+(cd "$D" && run plan >/dev/null 2>&1)
 mkdir -p "$D/.spear/blog/workspace" && cat > "$D/.spear/blog/workspace/draft.md" <<'EOF'
 # Why SPEAR
 Just a short stub draft so blog assess fires word-count defects.
 EOF
-(cd "$D" && run execute --json >/dev/null 2>&1); [ $? -eq 0 ] && ok "blog execute succeeds with draft.md" || ko "blog execute failed"
+(cd "$D" && run execute --json >/dev/null 2>&1); [ $? -eq 0 ] && ok "blog execute succeeds (after scope + plan + draft.md)" || ko "blog execute failed"
+
+# Phase-gate: a fresh init (phase=scope) must REFUSE execute
+GATE_TEST="$TMP/gate-test"
+mkdir -p "$GATE_TEST" && (cd "$GATE_TEST" && run init blog >/dev/null 2>&1)
+GATE_OUT=$(cd "$GATE_TEST" && run execute --json 2>&1 || true)
+echo "$GATE_OUT" | grep -q "Cannot execute" && ok "execute refuses when scope/plan haven't passed (hard gate)" || ko "execute didn't enforce phase gate"
 
 # ---------------------------------------------------------------------------
 section "6. Adapter assess + evidence"
