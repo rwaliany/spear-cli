@@ -10,7 +10,7 @@ FAILED_SCRIPTS=()
 
 print_section() { printf '\n\033[1m=== %s ===\033[0m\n' "$1"; }
 
-for s in e2e adversarial doc-examples fresh-clone dep-hygiene cross-platform extreme security state-corruption scale; do
+for s in e2e adversarial doc-examples fresh-clone dep-hygiene cross-platform extreme security state-corruption scale distribution deck-e2e; do
   print_section "scripts/$s.sh"
   if bash "$REPO_ROOT/scripts/$s.sh" 2>&1 | tail -1 | tee /tmp/probe-result.txt | grep -qE 'passed\.|adversarial probes passed'; then
     LAST=$(cat /tmp/probe-result.txt)
