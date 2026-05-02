@@ -16,6 +16,7 @@ import { promises as fs } from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
+import { atomicWrite } from '../state.js';
 import { requireOpenAIKey } from '../config.js';
 
 interface ImageOpts {
@@ -145,7 +146,7 @@ export async function imageCmd(opts: ImageOpts): Promise<void> {
     return;
   }
 
-  await fs.writeFile(outPath, bytes);
+  await atomicWrite(outPath, bytes);
 
   const result = {
     ok: true,

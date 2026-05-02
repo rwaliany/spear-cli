@@ -41,7 +41,10 @@ export async function readConfig(): Promise<UserConfig> {
 
 export async function writeConfig(cfg: UserConfig): Promise<void> {
   await fs.mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
-  await fs.writeFile(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+  // Atomic: write to .tmp, then rename. Preserves mode 0600 on the final file.
+  const tmp = `${CONFIG_PATH}.tmp.${process.pid}`;
+  await fs.writeFile(tmp, JSON.stringify(cfg, null, 2) + '\n', { mode: 0o600 });
+  await fs.rename(tmp, CONFIG_PATH);
 }
 
 export async function setConfigValue(key: ConfigKey, value: string): Promise<void> {

@@ -4,10 +4,10 @@
  * Validates → executes → assesses → loops. Stops on convergence, MAX_ROUNDS,
  * fatal error, or `<spear-complete/>` in the current RESOLVE.md.
  */
-import { promises as fs } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
 import {
+  atomicWrite,
   ensureRoundDir,
   readMd,
   readState,
@@ -83,7 +83,7 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean; name?:
     };
 
     const dir = roundDir(slug, round, cwd);
-    await fs.writeFile(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
+    await atomicWrite(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
 
     state.round = round;
     state.lastAssess = {

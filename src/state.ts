@@ -177,3 +177,16 @@ export async function ensureRoundDir(slug: string, round: number, cwd: string = 
   await fs.mkdir(path.join(dir, 'evidence'), { recursive: true });
   return dir;
 }
+
+/**
+ * Atomic file write: write to a sibling .tmp file, then rename. Rename is
+ * atomic on POSIX, so a partial write or Ctrl-C between steps cannot leave
+ * the target file half-written. Use for any state/spec/per-round artifact
+ * that must survive interrupts.
+ */
+export async function atomicWrite(filePath: string, data: string | Uint8Array, opts: { mode?: number } = {}): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp.${process.pid}`;
+  await fs.writeFile(tmp, data, opts.mode !== undefined ? { mode: opts.mode } : undefined);
+  await fs.rename(tmp, filePath);
+}

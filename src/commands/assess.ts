@@ -10,10 +10,10 @@
  *
  * Exit codes: 0 = converged, 2 = defects open
  */
-import { promises as fs } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
 import {
+  atomicWrite,
   ensureRoundDir,
   readState,
   resolveSlug,
@@ -68,11 +68,11 @@ export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: s
   result.evidence = persisted;
 
   const dir = roundDir(slug, round, cwd);
-  await fs.writeFile(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
+  await atomicWrite(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
 
   const resolveMd = renderResolveMd(result);
   await writeMd(slug, 'resolve', resolveMd);
-  await fs.writeFile(path.join(dir, 'RESOLVE.md'), resolveMd);
+  await atomicWrite(path.join(dir, 'RESOLVE.md'), resolveMd);
 
   state.round = round;
   state.phase = result.converged ? 'converged' : 'resolve';
