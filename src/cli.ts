@@ -9,6 +9,7 @@ import { resolveCmd } from './commands/resolve.js';
 import { loopCmd } from './commands/loop.js';
 import { statusCmd } from './commands/status.js';
 import { runnerCmd } from './commands/runner.js';
+import { listCmd } from './commands/list.js';
 import { imageCmd } from './commands/image.js';
 import {
   configSetCmd,
@@ -22,35 +23,39 @@ const program = new Command();
 program
   .name('spear')
   .description('Five-phase protocol for AI work that actually finishes.')
-  .version('0.1.0');
+  .version('0.2.0');
 
 program
-  .command('init <type>')
-  .description('Scaffold a SPEAR project (deck | blog | code | generic)')
+  .command('init <type> [name]')
+  .description('Scaffold a SPEAR project at .spear/<name>/ (name defaults to type)')
   .option('-f, --force', 'overwrite existing canonical files')
   .action(initCmd);
 
 program
   .command('scope')
   .description('Validate SCOPE.md (errors out with gaps if incomplete)')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON status')
   .action(scopeCmd);
 
 program
   .command('plan')
   .description('Validate PLAN.md exists and is approved')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON status')
   .action(planCmd);
 
 program
   .command('execute')
   .description('Run the artifact build (e.g., node build.js for decks)')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON status')
   .action(executeCmd);
 
 program
   .command('assess')
   .description('Run rubric checks, write RESOLVE.md, exit nonzero if defects')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON defect list')
   .option('--fast', 'mechanical checks only (skip subjective items deferred to LLM)')
   .action(assessCmd);
@@ -58,8 +63,9 @@ program
 program
   .command('resolve')
   .description('Closing phase — render a project-closure report (works as a PR body or standalone handoff)')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('-w, --write [path]', 'write to file (default CLOSEOUT.md); omit for stdout')
-  .option('-t, --template <path>', 'custom template (default: .spear/pr-template.md or built-in)')
+  .option('-t, --template <path>', 'custom template (default: .spear/<slug>/pr-template.md or built-in)')
   .option('--next', '[legacy] output next defect to fix during the assess loop')
   .option('--apply', '[legacy] apply mechanical fixes; flag the rest')
   .option('--json', 'emit JSON (PRContext) instead of rendered markdown')
@@ -68,20 +74,28 @@ program
 program
   .command('loop')
   .description('Orchestrate full SPEAR pipeline (validate → execute → assess → loop)')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('-r, --max-rounds <n>', 'iteration cap', '20')
   .option('--json', 'emit JSON per round')
   .action(loopCmd);
 
 program
   .command('status')
-  .description('Show current phase + open defects')
+  .description('Show current phase + open defects for one project')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON')
   .action(statusCmd);
 
 program
+  .command('list')
+  .description('Enumerate all SPEAR projects in the current repo')
+  .option('--json', 'emit JSON')
+  .action(listCmd);
+
+program
   .command('runner')
   .description('Multi-loop status reporter — print structured table every N seconds')
-  .option('-p, --paths <list>', 'comma-separated project paths (default: auto-discover from cwd)')
+  .option('-p, --paths <list>', 'comma-separated repo paths (default: cwd; descends into .spear/<slug>/)')
   .option('-i, --interval <seconds>', 'seconds between checks', '300')
   .option('--once', 'print once and exit (for CI / cron)')
   .option('--json', 'emit JSON instead of table')

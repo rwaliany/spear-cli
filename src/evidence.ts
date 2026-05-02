@@ -7,7 +7,7 @@
  * pointing at the artifact (with hash + size) so the LLM has a stable handle
  * and a reviewer can replay the check.
  *
- * persistEvidence copies referenced artifacts into .spear/rounds/{N}/evidence/
+ * persistEvidence copies referenced artifacts into .spear/<slug>/rounds/N/evidence/
  * so the trail is reconstructable round-over-round.
  */
 import { promises as fs } from 'fs';
@@ -28,14 +28,14 @@ export function fileSize(filePath: string): number {
 
 /**
  * Build an Evidence row for a file artifact (auto-fills size + hash).
- * Use for both mechanical pass/fail evidence and subjective deferred-to-LLM
- * pointers.
+ * `filePath` may be absolute or cwd-relative; the resulting Evidence stores
+ * the cwd-relative path for portability across rounds.
  */
 export async function fileEvidence(opts: {
   id: string;
   kind: 'mechanical' | 'subjective';
   description: string;
-  filePath: string;             // absolute or cwd-relative
+  filePath: string;
   cwd: string;
   pass?: boolean;
   expected?: unknown;
@@ -81,17 +81,18 @@ export function valueEvidence(opts: {
 }
 
 /**
- * Persist evidence for a round:
- *   - copies each referenced artifact into .spear/rounds/{N}/evidence/
- *   - writes evidence.json with the full list (post-copy paths)
+ * Persist evidence for a round under .spear/<slug>/rounds/N/evidence/:
+ *   - copies each referenced artifact
+ *   - writes evidence.json (post-copy paths)
  */
 export async function persistEvidence(
+  slug: string,
   round: number,
   evidence: Evidence[],
   cwd: string = process.cwd(),
 ): Promise<Evidence[]> {
-  const dir = await ensureRoundDir(round, cwd);
-  const evDir = evidenceDir(round, cwd);
+  const dir = await ensureRoundDir(slug, round, cwd);
+  const evDir = evidenceDir(slug, round, cwd);
   const persisted: Evidence[] = [];
   for (const ev of evidence) {
     if (!ev.artifact) {
@@ -107,7 +108,6 @@ export async function persistEvidence(
     try {
       await fs.copyFile(src, dest);
     } catch {
-      // best-effort copy; keep the original artifact pointer
       persisted.push(ev);
       continue;
     }

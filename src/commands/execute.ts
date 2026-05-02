@@ -3,21 +3,23 @@
  * Per-artifact-type adapters define exactly which commands to run.
  */
 import kleur from 'kleur';
-import { readState, writeState } from '../state.js';
-import { getAdapter } from '../adapters/index.js';
+import { readState, resolveSlug, writeState } from '../state.js';
+import { buildContext, getAdapter } from '../adapters/index.js';
 
-export async function executeCmd(opts: { json?: boolean }): Promise<void> {
-  const state = await readState();
+export async function executeCmd(opts: { json?: boolean; name?: string }): Promise<void> {
+  const slug = resolveSlugOrExit(opts);
+  const state = await readState(slug);
   if (!state) {
-    fail('No SPEAR project found in current directory. Run `spear init <type>` first.', opts);
+    fail(`No SPEAR project "${slug}" found. Run \`spear init <type> ${slug}\` first.`, opts);
     return;
   }
 
   const adapter = getAdapter(state.type);
-  const result = await adapter.execute(process.cwd());
+  const ctx = buildContext(slug, state.type);
+  const result = await adapter.execute(ctx);
 
   state.phase = result.success ? 'assess' : 'execute';
-  await writeState(state);
+  await writeState(slug, state);
 
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -48,4 +50,13 @@ function fail(msg: string, opts: { json?: boolean }): void {
     console.error(kleur.red('✗ ' + msg));
   }
   process.exit(1);
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
 }

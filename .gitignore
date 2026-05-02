@@ -11,12 +11,13 @@
 node_modules/
 dist/
 
-# SPEAR runtime state (per-project; not source)
-.spear/
-SCOPE.md.tmp.*
-PLAN.md.tmp.*
-ASSESS.md.tmp.*
-RESOLVE.md.tmp.*
+# SPEAR runtime: state + per-round artifacts are gitignored.
+# Spec files (SCOPE/PLAN/ASSESS/RESOLVE.md) under .spear/<slug>/ are tracked.
+.spear/*/state.json
+.spear/*/rounds/
+.spear/*/output/
+.spear/*/workspace/node_modules/
+.spear/*/*.tmp.*
 
 # Test artifacts
 test-project/

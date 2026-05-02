@@ -1,61 +1,60 @@
 /**
  * Deck adapter — pptxgenjs build + LibreOffice render + per-slide JPEG checks.
  *
- * Mechanical checks the CLI runs deterministically:
- *   - workspace/deck/build.js exists
- *   - `node build.js` exits 0
- *   - output/deck.pptx exists, nonzero size
- *   - LibreOffice render produces N JPEGs (qa/v-NN.jpg)
- *   - Each JPEG has minimum dimensions (not blank/cropped)
+ * Workspace layout (relative to ctx.workspaceDir = .spear/<slug>/workspace):
+ *   deck/build.js         — pptxgenjs source (LLM-generated)
+ *   deck/package.json     — npm deps
+ *   qa/v-NN.jpg           — rendered slide images
  *
- * Subjective checks (deferred to LLM, listed in defects with mechanical:false):
- *   - Pyramid principle, MECE, voice match, layout aesthetics
- *   - Lettered failure modes from ASSESS.md (A, B, C…)
+ * Output: .spear/<slug>/output/deck.pptx
  *
- * Every claim emits an Evidence row so the LLM (and reviewers) can verify.
+ * Mechanical checks emit Evidence with expected/actual; subjective checks
+ * (pyramid principle, MECE, voice) are deferred to the LLM via Evidence
+ * pointing at each rendered JPEG.
  */
 import { execSync, spawnSync } from 'child_process';
 import { existsSync, statSync, readdirSync } from 'fs';
 import path from 'path';
-import type { Adapter, AssessOutput, ExecuteResult } from './index.js';
+import type { Adapter, AdapterContext, AssessOutput, ExecuteResult } from './index.js';
 import type { Defect, Evidence } from '../types.js';
 import { fileEvidence, valueEvidence } from '../evidence.js';
 
 export const deckAdapter: Adapter = {
-  async execute(cwd: string): Promise<ExecuteResult> {
+  async execute(ctx: AdapterContext): Promise<ExecuteResult> {
     const steps: ExecuteResult['steps'] = [];
-    const buildJs = path.join(cwd, 'workspace/deck/build.js');
+    const buildJs = path.join(ctx.workspaceDir, 'deck', 'build.js');
 
     if (!existsSync(buildJs)) {
       steps.push({
-        name: 'workspace/deck/build.js exists',
+        name: `${path.relative(ctx.cwd, buildJs)} exists`,
         success: false,
-        error: 'Have Claude generate build.js based on PLAN.md',
+        error: 'Have the LLM generate build.js based on PLAN.md',
       });
       return { success: false, steps };
     }
-    steps.push({ name: 'workspace/deck/build.js exists', success: true });
+    steps.push({ name: `${path.relative(ctx.cwd, buildJs)} exists`, success: true });
 
-    if (!existsSync(path.join(cwd, 'workspace/deck/node_modules'))) {
-      const r = spawnSync('npm', ['install', '--silent'], { cwd: path.join(cwd, 'workspace/deck'), stdio: 'pipe' });
+    const deckDir = path.join(ctx.workspaceDir, 'deck');
+    if (!existsSync(path.join(deckDir, 'node_modules'))) {
+      const r = spawnSync('npm', ['install', '--silent'], { cwd: deckDir, stdio: 'pipe' });
       const success = r.status === 0;
       steps.push({ name: 'npm install', success, error: success ? undefined : r.stderr?.toString() });
       if (!success) return { success: false, steps };
     }
 
-    const buildOut = path.join(cwd, 'output');
+    const outputDir = path.join(ctx.projectDir, 'output');
     const r = spawnSync('node', ['build.js'], {
-      cwd: path.join(cwd, 'workspace/deck'),
+      cwd: deckDir,
       stdio: 'pipe',
-      env: { ...process.env, OUTPUT_DIR: buildOut },
+      env: { ...process.env, OUTPUT_DIR: outputDir },
     });
     const buildSuccess = r.status === 0;
     steps.push({ name: 'node build.js', success: buildSuccess, error: buildSuccess ? undefined : r.stderr?.toString() });
     if (!buildSuccess) return { success: false, steps };
 
-    const pptx = path.join(cwd, 'output/deck.pptx');
+    const pptx = path.join(outputDir, 'deck.pptx');
     const pptxOk = existsSync(pptx) && statSync(pptx).size > 1024;
-    steps.push({ name: 'output/deck.pptx exists', success: pptxOk });
+    steps.push({ name: `${path.relative(ctx.cwd, pptx)} exists`, success: pptxOk });
     if (!pptxOk) return { success: false, steps };
 
     const soffice = findSoffice();
@@ -69,7 +68,7 @@ export const deckAdapter: Adapter = {
     }
     steps.push({ name: 'libreoffice available', success: true });
 
-    const qaDir = path.join(cwd, 'workspace/qa');
+    const qaDir = path.join(ctx.workspaceDir, 'qa');
     if (existsSync(qaDir)) {
       spawnSync(
         'rm',
@@ -89,23 +88,24 @@ export const deckAdapter: Adapter = {
     return { success: jpegOk, steps };
   },
 
-  async assess(cwd: string, opts: { fast: boolean }): Promise<AssessOutput> {
+  async assess(ctx: AdapterContext, opts: { fast: boolean }): Promise<AssessOutput> {
     const defects: Defect[] = [];
     const evidence: Evidence[] = [];
-    const qaDir = path.join(cwd, 'workspace/qa');
+    const qaDir = path.join(ctx.workspaceDir, 'qa');
+    const qaRel = path.relative(ctx.cwd, qaDir);
 
     if (!existsSync(qaDir)) {
       evidence.push(
         valueEvidence({
           id: 'deck.render.qa-dir',
-          description: 'workspace/qa directory exists',
+          description: `${qaRel}/ directory exists`,
           pass: false,
           expected: 'directory exists',
           actual: 'missing',
         }),
       );
       defects.push({
-        unit: 'workspace/qa',
+        unit: qaRel,
         metric: 'render',
         severity: 'high',
         description: 'No rendered JPEGs found. Run `spear execute` first.',
@@ -119,7 +119,7 @@ export const deckAdapter: Adapter = {
     evidence.push(
       valueEvidence({
         id: 'deck.render.slide-count',
-        description: `Rendered slide JPEGs in workspace/qa/`,
+        description: 'Rendered slide JPEGs',
         pass: jpegs.length > 0,
         expected: '> 0',
         actual: jpegs.length,
@@ -127,7 +127,7 @@ export const deckAdapter: Adapter = {
     );
     if (jpegs.length === 0) {
       defects.push({
-        unit: 'workspace/qa',
+        unit: qaRel,
         metric: 'render',
         severity: 'high',
         description: 'No v-NN.jpg files. Render pipeline produced no slides.',
@@ -137,19 +137,18 @@ export const deckAdapter: Adapter = {
       return { defects, evidence };
     }
 
-    // Mechanical: every JPEG has nonzero size + per-slide artifact evidence
     for (const f of jpegs) {
       const slideNum = parseInt(f.replace('v-', '').replace('.jpg', ''), 10);
-      const rel = path.join('workspace/qa', f);
-      const size = statSync(path.join(cwd, rel)).size;
+      const abs = path.join(qaDir, f);
+      const size = statSync(abs).size;
       const evId = `deck.slide.${slideNum}.render`;
       evidence.push(
         await fileEvidence({
           id: evId,
           kind: 'mechanical',
           description: `Slide ${slideNum} JPEG (${size} bytes)`,
-          filePath: rel,
-          cwd,
+          filePath: abs,
+          cwd: ctx.cwd,
           pass: size >= 1024,
           expected: '>= 1024 bytes',
           actual: size,
@@ -167,21 +166,18 @@ export const deckAdapter: Adapter = {
       }
     }
 
-    // Subjective per-slide rubric scoring — defer to the LLM.
-    // Each emits an Evidence pointing at the JPEG so the LLM has a stable
-    // (path, hash, size) handle and a reviewer can replay.
     if (!opts.fast) {
       for (const f of jpegs) {
         const slideNum = parseInt(f.replace('v-', '').replace('.jpg', ''), 10);
-        const rel = path.join('workspace/qa', f);
+        const abs = path.join(qaDir, f);
         const evId = `deck.slide.${slideNum}.rubric`;
         evidence.push(
           await fileEvidence({
             id: evId,
             kind: 'subjective',
             description: `Slide ${slideNum} — score against ASSESS.md`,
-            filePath: rel,
-            cwd,
+            filePath: abs,
+            cwd: ctx.cwd,
             rubricRef: 'ASSESS.md',
           }),
         );
@@ -189,7 +185,7 @@ export const deckAdapter: Adapter = {
           unit: `Slide ${slideNum}`,
           metric: 'rubric',
           severity: 'medium',
-          description: `Score slide against ASSESS.md (read ${rel})`,
+          description: `Score slide against ASSESS.md (read ${path.relative(ctx.cwd, abs)})`,
           mechanical: false,
           evidenceId: evId,
         });

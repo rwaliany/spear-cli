@@ -1,6 +1,6 @@
 {
   "name": "@waliany/spear",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Five-phase protocol (Scope → Plan → Execute → Assess → Resolve) for AI work that actually finishes.",
   "type": "module",
   "bin": {

@@ -1,15 +1,16 @@
 /**
  * spear plan — validate PLAN.md exists and has a numbered step list.
- * Does NOT generate the plan content — that's Claude's job. The CLI just
+ * Does NOT generate the plan content — that's the LLM's job. The CLI just
  * enforces "PLAN.md must exist and be reviewed before Execute can start."
  */
 import kleur from 'kleur';
-import { readMd, readState, writeState } from '../state.js';
+import { readMd, readState, resolveSlug, writeState } from '../state.js';
 
-export async function planCmd(opts: { json?: boolean }): Promise<void> {
-  const md = await readMd('plan');
+export async function planCmd(opts: { json?: boolean; name?: string }): Promise<void> {
+  const slug = resolveSlugOrExit(opts);
+  const md = await readMd(slug, 'plan');
   if (md === null) {
-    fail('PLAN.md not found.', opts, 'Have Claude write the plan, then re-run.');
+    fail(`PLAN.md not found for "${slug}".`, opts, 'Have the LLM write the plan, then re-run.');
     return;
   }
 
@@ -22,11 +23,10 @@ export async function planCmd(opts: { json?: boolean }): Promise<void> {
     approved,
   };
 
-  // Update state
-  const state = await readState();
+  const state = await readState(slug);
   if (state && report.valid) {
     state.phase = 'execute';
-    await writeState(state);
+    await writeState(slug, state);
   }
 
   if (opts.json) {
@@ -45,7 +45,6 @@ export async function planCmd(opts: { json?: boolean }): Promise<void> {
 }
 
 function countSteps(md: string): number {
-  // Count top-level numbered list items: lines starting with "1. ", "2. ", etc.
   const matches = md.match(/^\d+\.\s+/gm);
   return matches ? matches.length : 0;
 }
@@ -62,4 +61,13 @@ function fail(msg: string, opts: { json?: boolean }, hint?: string): void {
     if (hint) console.error(kleur.dim('  ' + hint));
   }
   process.exit(1);
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
 }

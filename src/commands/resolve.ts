@@ -2,21 +2,21 @@
  * spear resolve — the close-out phase.
  *
  * Default action: render a project-closure report (highlights, lowlights, what
- * to test, warnings, next steps) sourced from state.json, RESOLVE.md, and
- * per-round assess/evidence artifacts. The same content fits a PR description
- * inside a git repo, or stands alone as a handoff doc when there's no repo.
+ * to test, warnings, next steps). Inside a git repo it doubles as a PR body;
+ * outside one it stands alone as a handoff doc.
  *
  * Flags:
  *   --write [path]      write to file (default: CLOSEOUT.md). Without --write, prints to stdout.
- *   --template <path>   override the template (default: .spear/pr-template.md or built-in)
+ *   --template <path>   override the template (default: .spear/<slug>/pr-template.md or built-in)
  *   --next              [legacy] show next defect to fix during the assess loop
  *   --apply             [legacy] dispatch mechanical fixers (still a stub)
  *   --json              emit JSON (PRContext) instead of rendered markdown
+ *   --name <slug>       pick a SPEAR project (auto-detected if only one)
  */
 import { promises as fs } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
-import { readMd } from '../state.js';
+import { readMd, resolveSlug } from '../state.js';
 import { renderPR } from '../pr.js';
 
 interface ResolveOpts {
@@ -25,15 +25,17 @@ interface ResolveOpts {
   next?: boolean;
   apply?: boolean;
   json?: boolean;
+  name?: string;
 }
 
 export async function resolveCmd(opts: ResolveOpts): Promise<void> {
-  if (opts.next) return showNext(opts);
+  const slug = resolveSlugOrExit(opts);
+
+  if (opts.next) return showNext(slug, opts);
   if (opts.apply) return applyMechanical(opts);
 
-  // Default: render the PR / closure document
   const cwd = process.cwd();
-  const { markdown, context } = await renderPR({
+  const { markdown, context } = await renderPR(slug, {
     cwd,
     templatePath: opts.template,
   });
@@ -58,8 +60,8 @@ export async function resolveCmd(opts: ResolveOpts): Promise<void> {
   process.stdout.write(markdown);
 }
 
-async function showNext(opts: ResolveOpts): Promise<void> {
-  const md = await readMd('resolve');
+async function showNext(slug: string, opts: ResolveOpts): Promise<void> {
+  const md = await readMd(slug, 'resolve');
   if (!md) {
     if (opts.json) console.log(JSON.stringify({ defect: null }));
     else console.log(kleur.dim('No RESOLVE.md found. Run `spear assess` first.'));
@@ -94,4 +96,13 @@ function parseDefects(md: string): string[] {
     }
   }
   return out;
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
 }

@@ -1,26 +1,29 @@
 /**
- * Code adapter — runs build/lint/typecheck/test commands defined in SCOPE.md
- * (or auto-detected: package.json scripts, Makefile targets).
+ * Code adapter — runs build/lint/typecheck/test commands defined in the
+ * surrounding repo's package.json.
+ *
+ * For code projects, ctx.workspaceDir = ctx.cwd (the repo itself), not
+ * .spear/<slug>/workspace. The adapter scans the actual codebase.
  *
  * Mechanical evidence: type-check passes, tests pass, lint clean, no `any`/console.log.
- * Subjective: contract docs, edge cases, voice — deferred to LLM.
+ * Subjective: contract docs, edge cases — deferred to LLM.
  */
 import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import path from 'path';
-import type { Adapter, AssessOutput, ExecuteResult } from './index.js';
+import type { Adapter, AdapterContext, AssessOutput, ExecuteResult } from './index.js';
 import type { Defect, Evidence } from '../types.js';
 import { valueEvidence } from '../evidence.js';
 
 export const codeAdapter: Adapter = {
-  async execute(cwd: string): Promise<ExecuteResult> {
+  async execute(ctx: AdapterContext): Promise<ExecuteResult> {
     const steps: ExecuteResult['steps'] = [];
-    const pkgPath = path.join(cwd, 'package.json');
+    const pkgPath = path.join(ctx.workspaceDir, 'package.json');
     if (existsSync(pkgPath)) {
       const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
       for (const script of ['typecheck', 'lint', 'test']) {
         if (pkg.scripts?.[script]) {
-          const r = spawnSync('npm', ['run', '--silent', script], { cwd, stdio: 'pipe' });
+          const r = spawnSync('npm', ['run', '--silent', script], { cwd: ctx.workspaceDir, stdio: 'pipe' });
           steps.push({
             name: `npm run ${script}`,
             success: r.status === 0,
@@ -32,18 +35,18 @@ export const codeAdapter: Adapter = {
     return { success: steps.every((s) => s.success), steps };
   },
 
-  async assess(cwd: string, opts: { fast: boolean }): Promise<AssessOutput> {
+  async assess(ctx: AdapterContext, opts: { fast: boolean }): Promise<AssessOutput> {
     const defects: Defect[] = [];
     const evidence: Evidence[] = [];
 
-    const files = listSourceFiles(cwd);
+    const files = listSourceFiles(ctx.workspaceDir);
     let anyHits = 0;
     let logHits = 0;
     let todoHits = 0;
 
     for (const f of files) {
       const txt = readFileSync(f, 'utf-8');
-      const rel = path.relative(cwd, f);
+      const rel = path.relative(ctx.cwd, f);
       if (/:\s*any\b/.test(txt)) {
         anyHits++;
         defects.push({
@@ -126,12 +129,12 @@ export const codeAdapter: Adapter = {
   },
 };
 
-function listSourceFiles(cwd: string, dir = cwd, out: string[] = []): string[] {
+function listSourceFiles(root: string, dir = root, out: string[] = []): string[] {
   if (!existsSync(dir)) return out;
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === 'dist') continue;
     const p = path.join(dir, e.name);
-    if (e.isDirectory()) listSourceFiles(cwd, p, out);
+    if (e.isDirectory()) listSourceFiles(root, p, out);
     else if (/\.(ts|tsx|js|jsx|py|go|rs)$/.test(e.name)) out.push(p);
   }
   return out;

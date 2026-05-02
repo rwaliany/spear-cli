@@ -1,8 +1,10 @@
 /**
  * Blog adapter — markdown → mechanical checks.
  *
+ * Workspace: ctx.workspaceDir/draft.md (i.e., .spear/<slug>/workspace/draft.md)
+ *
  * Mechanical checks emit Evidence with expected/actual:
- *   - workspace/draft.md exists
+ *   - draft.md exists
  *   - Word count within bounds (default 500–3000)
  *   - Image cadence: at least one image per ~600 words
  *   - Header case consistency (title-case OR sentence-case throughout)
@@ -11,41 +13,46 @@
  */
 import { existsSync, readFileSync } from 'fs';
 import path from 'path';
-import type { Adapter, AssessOutput, ExecuteResult } from './index.js';
+import type { Adapter, AdapterContext, AssessOutput, ExecuteResult } from './index.js';
 import type { Defect, Evidence } from '../types.js';
 import { fileEvidence, valueEvidence } from '../evidence.js';
 
-const DRAFT = 'workspace/draft.md';
+const DRAFT_NAME = 'draft.md';
 
 export const blogAdapter: Adapter = {
-  async execute(cwd: string): Promise<ExecuteResult> {
+  async execute(ctx: AdapterContext): Promise<ExecuteResult> {
     const steps: ExecuteResult['steps'] = [];
-    const draft = path.join(cwd, DRAFT);
+    const draft = path.join(ctx.workspaceDir, DRAFT_NAME);
     const exists = existsSync(draft);
-    steps.push({ name: `${DRAFT} exists`, success: exists, error: exists ? undefined : 'Have Claude write the draft' });
+    steps.push({
+      name: `${path.relative(ctx.cwd, draft)} exists`,
+      success: exists,
+      error: exists ? undefined : 'Have the LLM write the draft',
+    });
     return { success: exists, steps };
   },
 
-  async assess(cwd: string, opts: { fast: boolean }): Promise<AssessOutput> {
+  async assess(ctx: AdapterContext, opts: { fast: boolean }): Promise<AssessOutput> {
     const defects: Defect[] = [];
     const evidence: Evidence[] = [];
-    const draft = path.join(cwd, DRAFT);
+    const draft = path.join(ctx.workspaceDir, DRAFT_NAME);
+    const draftRel = path.relative(ctx.cwd, draft);
 
     if (!existsSync(draft)) {
       evidence.push(
         valueEvidence({
           id: 'blog.draft.exists',
-          description: 'workspace/draft.md exists',
+          description: `${draftRel} exists`,
           pass: false,
           expected: 'exists',
           actual: 'missing',
         }),
       );
       defects.push({
-        unit: DRAFT,
+        unit: draftRel,
         metric: 'render',
         severity: 'high',
-        description: 'workspace/draft.md not found',
+        description: `${draftRel} not found`,
         mechanical: true,
         evidenceId: 'blog.draft.exists',
       });
@@ -68,7 +75,7 @@ export const blogAdapter: Adapter = {
 
     if (words < 500) {
       defects.push({
-        unit: DRAFT,
+        unit: draftRel,
         metric: 'word-count',
         severity: 'medium',
         description: `Draft has ${words} words; target 500-3000`,
@@ -77,7 +84,7 @@ export const blogAdapter: Adapter = {
       });
     } else if (words > 3000) {
       defects.push({
-        unit: DRAFT,
+        unit: draftRel,
         metric: 'word-count',
         severity: 'low',
         description: `Draft has ${words} words; consider tightening`,
@@ -98,7 +105,7 @@ export const blogAdapter: Adapter = {
     );
     if (images < expectedImages) {
       defects.push({
-        unit: DRAFT,
+        unit: draftRel,
         metric: 'K (wall-of-text)',
         severity: 'medium',
         description: `${images} images for ${words} words; expected ≥${expectedImages}`,
@@ -123,7 +130,7 @@ export const blogAdapter: Adapter = {
       );
       if (mixed) {
         defects.push({
-          unit: DRAFT,
+          unit: draftRel,
           metric: 'G (header-case-mixing)',
           severity: 'medium',
           description: `${titleCase} title-case vs ${sentenceCase} sentence-case H2s; pick one`,
@@ -140,16 +147,16 @@ export const blogAdapter: Adapter = {
           id: evId,
           kind: 'subjective',
           description: 'Score draft against ASSESS.md',
-          filePath: DRAFT,
-          cwd,
+          filePath: draft,
+          cwd: ctx.cwd,
           rubricRef: 'ASSESS.md',
         }),
       );
       defects.push({
-        unit: DRAFT,
+        unit: draftRel,
         metric: 'rubric',
         severity: 'medium',
-        description: `Score draft against ASSESS.md (read ${draft})`,
+        description: `Score draft against ASSESS.md (read ${draftRel})`,
         mechanical: false,
         evidenceId: evId,
       });

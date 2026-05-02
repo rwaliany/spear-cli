@@ -3,35 +3,38 @@
  * Execute is a no-op that just verifies workspace/ has files. All assessment
  * is deferred to the LLM (read ASSESS.md, score the output).
  *
- * Evidence: emit one row per file in workspace/ so the LLM has hashes/sizes
- * for everything it might be asked to score.
+ * Workspace: ctx.workspaceDir (i.e., .spear/<slug>/workspace/).
  */
 import { existsSync, readdirSync, statSync } from 'fs';
 import path from 'path';
-import type { Adapter, AssessOutput, ExecuteResult } from './index.js';
+import type { Adapter, AdapterContext, AssessOutput, ExecuteResult } from './index.js';
 import type { Defect, Evidence } from '../types.js';
 import { fileEvidence, valueEvidence } from '../evidence.js';
 
 export const genericAdapter: Adapter = {
-  async execute(cwd: string): Promise<ExecuteResult> {
-    const ws = path.join(cwd, 'workspace');
-    const exists = existsSync(ws) && readdirSync(ws).length > 0;
+  async execute(ctx: AdapterContext): Promise<ExecuteResult> {
+    const exists = existsSync(ctx.workspaceDir) && readdirSync(ctx.workspaceDir).length > 0;
     return {
       success: exists,
-      steps: [{ name: 'workspace has content', success: exists, error: exists ? undefined : 'Add files to workspace/' }],
+      steps: [
+        {
+          name: `${path.relative(ctx.cwd, ctx.workspaceDir)} has content`,
+          success: exists,
+          error: exists ? undefined : `Add files to ${path.relative(ctx.cwd, ctx.workspaceDir)}/`,
+        },
+      ],
     };
   },
 
-  async assess(cwd: string, opts: { fast: boolean }): Promise<AssessOutput> {
+  async assess(ctx: AdapterContext, opts: { fast: boolean }): Promise<AssessOutput> {
     const defects: Defect[] = [];
     const evidence: Evidence[] = [];
-    const ws = path.join(cwd, 'workspace');
 
-    if (!existsSync(ws)) {
+    if (!existsSync(ctx.workspaceDir)) {
       evidence.push(
         valueEvidence({
           id: 'generic.workspace.exists',
-          description: 'workspace/ directory exists',
+          description: `${path.relative(ctx.cwd, ctx.workspaceDir)}/ exists`,
           pass: false,
           expected: 'exists',
           actual: 'missing',
@@ -41,7 +44,7 @@ export const genericAdapter: Adapter = {
     }
 
     const files: string[] = [];
-    walk(ws, ws, files);
+    walk(ctx.workspaceDir, ctx.workspaceDir, files);
     evidence.push(
       valueEvidence({
         id: 'generic.workspace.file-count',
@@ -58,9 +61,9 @@ export const genericAdapter: Adapter = {
         await fileEvidence({
           id: evId,
           kind: 'subjective',
-          description: `Score workspace/${rel} against ASSESS.md`,
-          filePath: path.join('workspace', rel),
-          cwd,
+          description: `Score ${rel} against ASSESS.md`,
+          filePath: path.join(ctx.workspaceDir, rel),
+          cwd: ctx.cwd,
           rubricRef: 'ASSESS.md',
         }),
       );

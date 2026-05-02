@@ -40,32 +40,58 @@ Or via npm (once published):
 npm install -g @waliany/spear
 ```
 
+## Project layout — `.spear/<slug>/`
+
+A SPEAR project lives in a slug-named subdirectory under `.spear/`. One repo can host many projects (e.g., a deck + a blog + the code itself), each with its own scope, plan, evidence, and rounds — no top-level pollution.
+
+```
+my-repo/
+├── src/                       ← your actual project
+├── .spear/
+│   ├── deck/                  ← slug 1
+│   │   ├── SCOPE.md  PLAN.md  ASSESS.md  RESOLVE.md   ← tracked
+│   │   ├── state.json  rounds/                         ← gitignored (runtime)
+│   │   ├── workspace/         ← deck source (build.js, etc.)
+│   │   └── output/            ← deck.pptx
+│   └── post-launch/           ← slug 2 (a blog)
+│       ├── SCOPE.md  ...
+│       └── workspace/draft.md
+```
+
+Single-slug repos auto-resolve. Multi-slug repos require `--name <slug>` (or `SPEAR_PROJECT=<slug>`).
+
 ## 60-second quickstart
 
 ```bash
-mkdir my-blog-post && cd my-blog-post
-spear init blog               # scaffold SCOPE/PLAN/ASSESS/RESOLVE.md + workspace/
-# edit SCOPE.md (define goal, audience, constraints, done means)
-spear scope                   # CLI validates SCOPE.md is filled; exits 1 if not
-# Have your LLM draft the post in workspace/draft.md
-spear loop                    # full pipeline: execute + assess
-# CLI surfaces defects in RESOLVE.md; LLM applies fixes; re-run `spear loop`
-# Repeat until exit 0 (converged)
+cd my-repo
+spear init blog post-launch        # creates .spear/post-launch/
+# edit .spear/post-launch/SCOPE.md (goal, audience, constraints, done means)
+spear scope --name post-launch     # validates SCOPE.md (auto-resolves if it's the only slug)
+# Have your LLM draft the post in .spear/post-launch/workspace/draft.md
+spear loop                         # full pipeline: execute + assess
+# CLI surfaces defects + evidence in RESOLVE.md; LLM applies fixes; re-run
+# Repeat until exit 0 (converged) or LLM marks <spear-complete/>
+spear resolve --write              # close out: write CLOSEOUT.md (or PR.md)
 ```
 
 ## Commands
 
 ```
-spear init <type>      Scaffold a SPEAR project (deck | blog | code | generic)
-spear scope            Validate SCOPE.md is filled (exits 1 with gaps)
-spear plan             Validate PLAN.md exists + is approved (exits 1 if not)
-spear execute          Run the artifact build (deck → pptx, code → tests, etc.)
-spear assess           Run rubric checks, write RESOLVE.md, exit nonzero if defects
-spear resolve          Show or apply pending fixes from RESOLVE.md
-spear loop             Orchestrate full pipeline: execute → assess → loop
-spear status           Show current phase, round, open defects
-spear runner           Multi-loop status reporter for parallel SPEAR projects
+spear init <type> [name]   Scaffold .spear/<name>/ (name defaults to type)
+spear list                 Enumerate every SPEAR project in this repo
+spear scope                Validate SCOPE.md (exits 1 with gaps)
+spear plan                 Validate PLAN.md exists + is approved (exits 1 if not)
+spear execute              Run the artifact build (deck → pptx, code → tests, etc.)
+spear assess               Run rubric checks, write RESOLVE.md, exit nonzero if defects
+spear loop                 Orchestrate full pipeline: execute → assess → loop
+spear resolve              Closing phase — render PR / closeout report
+spear status               Detailed status for one project
+spear runner               Multi-loop status reporter for parallel projects
+spear image                Generate a single image via OpenAI
+spear config               Manage user config (~/.spear/config.json)
 ```
+
+Every phase command takes `--name <slug>` to disambiguate when there are multiple projects in `.spear/`. Most support `--json` for piping.
 
 Most commands support `--json` for piping to other tools.
 

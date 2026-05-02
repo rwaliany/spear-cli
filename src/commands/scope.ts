@@ -2,14 +2,14 @@
  * spear scope — validate SCOPE.md is complete enough to proceed.
  *
  * Deterministic checks:
- *   - File exists
+ *   - File exists at .spear/<slug>/SCOPE.md
  *   - Required H2 sections present (Goal, Audience, Inputs, Constraints, Done means)
- *   - Each section has non-template content (i.e., user replaced the placeholder)
+ *   - Each section has non-template content
  *
  * Exits 0 if valid, 1 if not. Always writes a status block.
  */
 import kleur from 'kleur';
-import { readMd, readState, writeState } from '../state.js';
+import { readMd, readState, resolveSlug, writeState } from '../state.js';
 
 const REQUIRED_SECTIONS = ['Goal', 'Audience', 'Inputs', 'Constraints', 'Done means'];
 
@@ -20,15 +20,16 @@ interface ScopeReport {
   maxRounds: number;
 }
 
-export async function scopeCmd(opts: { json?: boolean }): Promise<void> {
-  const md = await readMd('scope');
+export async function scopeCmd(opts: { json?: boolean; name?: string }): Promise<void> {
+  const slug = resolveSlugOrExit(opts);
+  const md = await readMd(slug, 'scope');
   if (md === null) {
-    fail('SCOPE.md not found. Run `spear init <type>` first.', opts);
+    fail(`SCOPE.md not found for "${slug}". Run \`spear init <type> ${slug}\` first.`, opts);
     return;
   }
 
   const report = analyze(md);
-  await persistRound(report);
+  await persistRound(slug, report);
 
   if (opts.json) {
     console.log(JSON.stringify(report, null, 2));
@@ -56,7 +57,6 @@ function analyze(md: string): ScopeReport {
     }
   }
 
-  // MAX_ROUNDS override
   const maxRoundsMatch = md.match(/MAX_ROUNDS\s*=\s*(\d+)/);
   const maxRounds = maxRoundsMatch ? parseInt(maxRoundsMatch[1], 10) : 20;
 
@@ -91,38 +91,32 @@ function looksLikePlaceholder(body: string): boolean {
   // A section is filled if at least one line has substantive non-template content.
   // Substantive = non-blockquote, non-italic-only, non-empty-checkbox, contains at
   // least 5 alphabetic words after stripping italic spans + an optional "Label:" prefix.
-  //
-  // Note: we intentionally do NOT pre-filter lines that mention "TODO"/"placeholder"/
-  // "FIXME" — those words appear in legitimate prose (e.g., "the rubric scans for
-  // TODO comments") and false-positiving on them rejects valid content. Real
-  // template stubs are caught by the blockquote/italic/checkbox skips above.
   for (const rawLine of body.split('\n')) {
     let line = rawLine.trim();
     if (!line) continue;
-    if (line.startsWith('>')) continue;          // blockquote example
-    if (line.startsWith('- [ ]')) continue;      // empty checkbox
-    if (/^_.*_$/.test(line)) continue;           // entirely italic
-    // Strip italic spans for the word count
+    if (line.startsWith('>')) continue;
+    if (line.startsWith('- [ ]')) continue;
+    if (/^_.*_$/.test(line)) continue;
     line = line.replace(/_[^_]*_/g, '').trim();
-    // Strip leading "Label:" if rest is empty
     const afterColon = line.replace(/^[A-Z][A-Za-z\s/(),.-]*:\s*/, '').trim();
     if (!afterColon) continue;
     const words = afterColon.match(/[A-Za-z][A-Za-z0-9'-]+/g) ?? [];
-    if (words.length >= 5) return false;         // real content
+    if (words.length >= 5) return false;
   }
   return true;
 }
 
-async function persistRound(report: ScopeReport): Promise<void> {
-  const state = (await readState()) ?? {
+async function persistRound(slug: string, report: ScopeReport): Promise<void> {
+  const state = (await readState(slug)) ?? {
     type: 'generic' as const,
+    slug,
     round: 0,
     phase: 'scope' as const,
     maxRounds: report.maxRounds,
   };
   state.maxRounds = report.maxRounds;
   state.phase = report.valid ? 'plan' : 'scope';
-  await writeState(state);
+  await writeState(slug, state);
 }
 
 function print(report: ScopeReport): void {
@@ -149,4 +143,13 @@ function fail(msg: string, opts: { json?: boolean }): void {
     console.error(kleur.red('✗ ' + msg));
   }
   process.exit(1);
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
 }

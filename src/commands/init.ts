@@ -1,13 +1,23 @@
 /**
- * spear init <type> — scaffold a SPEAR project.
- * Deterministic file copy from templates/<type>/ into cwd.
+ * spear init <type> [name] — scaffold a SPEAR project under .spear/<name>/.
+ *
+ * Deterministic file copy from templates/<type>/ into .spear/<name>/.
+ * If [name] is omitted, defaults to <type>. One repo can host multiple
+ * projects, each with its own slug — workspace + output directories are
+ * scoped under the slug too.
  */
 import { promises as fs } from 'fs';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import kleur from 'kleur';
-import { writeState } from '../state.js';
+import {
+  SPEAR_DIR,
+  projectDir,
+  specPath,
+  validateSlug,
+  writeState,
+} from '../state.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TEMPLATES_DIR = path.resolve(__dirname, '..', '..', 'templates');
@@ -15,15 +25,31 @@ const TEMPLATES_DIR = path.resolve(__dirname, '..', '..', 'templates');
 const VALID_TYPES = ['deck', 'blog', 'code', 'generic'] as const;
 type ProjectType = (typeof VALID_TYPES)[number];
 
-export async function initCmd(type: string, opts: { force?: boolean }): Promise<void> {
+const SPEC_FILES: Array<{ name: 'scope' | 'plan' | 'assess' | 'resolve'; file: string }> = [
+  { name: 'scope', file: 'SCOPE.md' },
+  { name: 'plan', file: 'PLAN.md' },
+  { name: 'assess', file: 'ASSESS.md' },
+  { name: 'resolve', file: 'RESOLVE.md' },
+];
+
+export async function initCmd(type: string, name: string | undefined, opts: { force?: boolean }): Promise<void> {
   if (!VALID_TYPES.includes(type as ProjectType)) {
     console.error(kleur.red(`Unknown type: ${type}`));
     console.error(`Valid types: ${VALID_TYPES.join(', ')}`);
     process.exit(1);
   }
 
+  const slug = name ?? type;
+  try {
+    validateSlug(slug);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
+
   const src = path.join(TEMPLATES_DIR, type);
-  const dst = process.cwd();
+  const cwd = process.cwd();
+  const dst = projectDir(slug, cwd);
 
   if (!existsSync(src)) {
     console.error(kleur.red(`Template not found: ${src}`));
@@ -31,26 +57,28 @@ export async function initCmd(type: string, opts: { force?: boolean }): Promise<
     process.exit(1);
   }
 
-  // Copy canonical files
-  for (const file of ['SCOPE.md', 'PLAN.md', 'ASSESS.md', 'RESOLVE.md']) {
+  await fs.mkdir(dst, { recursive: true });
+
+  for (const { file } of SPEC_FILES) {
     const srcFile = path.join(src, file);
     const dstFile = path.join(dst, file);
     if (existsSync(dstFile) && !opts.force) {
-      console.error(kleur.yellow(`Exists, skipping: ${file} (--force to overwrite)`));
+      console.error(kleur.yellow(`Exists, skipping: ${path.relative(cwd, dstFile)} (--force to overwrite)`));
       continue;
     }
     if (existsSync(srcFile)) {
       await fs.copyFile(srcFile, dstFile);
-      console.log(kleur.green('  + ') + file);
+      console.log(kleur.green('  + ') + path.relative(cwd, dstFile));
     }
   }
 
-  // Create workspace + output directories
+  // Per-slug workspace + output directories. These hold the actual artifact
+  // (e.g., the deck source, blog draft) and the build outputs. Keeping them
+  // under .spear/<slug>/ means multiple slugs in one repo don't collide.
   for (const dir of ['workspace', 'output']) {
     await fs.mkdir(path.join(dst, dir), { recursive: true });
   }
 
-  // Type-specific scaffolding (e.g., starter package.json for deck)
   if (type === 'deck') {
     const pkgPath = path.join(dst, 'workspace', 'deck', 'package.json');
     if (!existsSync(pkgPath)) {
@@ -59,7 +87,7 @@ export async function initCmd(type: string, opts: { force?: boolean }): Promise<
         pkgPath,
         JSON.stringify(
           {
-            name: 'deck',
+            name: `deck-${slug}`,
             type: 'module',
             private: true,
             dependencies: { pptxgenjs: '^3.12.0' },
@@ -68,23 +96,24 @@ export async function initCmd(type: string, opts: { force?: boolean }): Promise<
           2,
         ) + '\n',
       );
-      console.log(kleur.green('  + ') + 'workspace/deck/package.json');
+      console.log(kleur.green('  + ') + path.relative(cwd, pkgPath));
     }
   }
 
-  // Initialize state
-  await writeState({
+  await writeState(slug, {
     type: type as ProjectType,
+    slug,
     round: 0,
     phase: 'scope',
     maxRounds: 20,
-  }, dst);
+  }, cwd);
 
   console.log();
-  console.log(kleur.bold('✓ SPEAR project initialized.'));
+  console.log(kleur.bold(`✓ SPEAR project "${slug}" initialized at ${SPEAR_DIR}/${slug}/.`));
   console.log();
   console.log('Next steps:');
-  console.log(`  1. Edit ${kleur.cyan('SCOPE.md')} — fill in goal, audience, constraints, done means`);
-  console.log(`  2. Run ${kleur.cyan('spear scope')} to validate scope`);
-  console.log(`  3. Run ${kleur.cyan('spear loop')} to execute the full SPEAR pipeline`);
+  const scopeRel = path.relative(cwd, specPath(slug, 'scope', cwd));
+  console.log(`  1. Edit ${kleur.cyan(scopeRel)} — fill in goal, audience, constraints, done means`);
+  console.log(`  2. Run ${kleur.cyan('spear scope' + (slug !== type ? ` --name ${slug}` : ''))} to validate scope`);
+  console.log(`  3. Run ${kleur.cyan('spear loop' + (slug !== type ? ` --name ${slug}` : ''))} to execute the full SPEAR pipeline`);
 }

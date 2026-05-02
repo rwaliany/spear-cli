@@ -2,51 +2,46 @@
  * spear assess — run the rubric checks, write RESOLVE.md, exit nonzero if defects.
  *
  * Three layers:
- *   1. Mechanical checks (file size, word count, type-check pass) → pass/expected/actual evidence
- *   2. Subjective checks (rubric scoring) → evidence pointing at the artifact
+ *   1. Mechanical checks → pass/expected/actual evidence
+ *   2. Subjective checks → evidence pointing at the artifact
  *   3. Stuck-loop detection: if defectCount unchanged for ≥2 rounds, flag it
  *
- * Per-round artifacts persist under .spear/rounds/{N}/:
- *   assess.json     — the AssessResult
- *   evidence.json   — the persisted Evidence list (with copied artifacts)
- *   evidence/       — copies of every referenced artifact (deck JPEGs, drafts)
- *   RESOLVE.md      — snapshot of RESOLVE.md as written this round
+ * Per-round artifacts persist under .spear/<slug>/rounds/N/.
  *
- * Exit codes:
- *   0 = converged (or <spear-complete/> honored upstream)
- *   2 = defects open
+ * Exit codes: 0 = converged, 2 = defects open
  */
 import { promises as fs } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
 import {
   ensureRoundDir,
-  readMd,
   readState,
+  resolveSlug,
   roundDir,
   writeMd,
   writeState,
 } from '../state.js';
-import { getAdapter } from '../adapters/index.js';
+import { buildContext, getAdapter } from '../adapters/index.js';
 import { persistEvidence } from '../evidence.js';
 import type { AssessResult } from '../types.js';
 
-export async function assessCmd(opts: { json?: boolean; fast?: boolean }): Promise<void> {
+export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string }): Promise<void> {
+  const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
   const startedAt = Date.now();
-  const state = await readState();
+  const state = await readState(slug);
   if (!state) {
-    console.error(kleur.red('✗ No SPEAR project found.'));
+    console.error(kleur.red(`✗ No SPEAR project "${slug}" found.`));
     process.exit(1);
   }
 
   const adapter = getAdapter(state.type);
-  const { defects, evidence } = await adapter.assess(cwd, { fast: !!opts.fast });
+  const ctx = buildContext(slug, state.type, cwd);
+  const { defects, evidence } = await adapter.assess(ctx, { fast: !!opts.fast });
 
   const round = state.round + 1;
   const timestamp = new Date().toISOString();
 
-  // Stuck-loop: defectCount plateau across rounds
   const prevCount = state.lastRoundDefectCount;
   const stuck = prevCount !== undefined && prevCount === defects.length && round > 1 && defects.length > 0;
   const stuckSince = stuck ? state.stuckSince ?? round - 1 : undefined;
@@ -68,21 +63,17 @@ export async function assessCmd(opts: { json?: boolean; fast?: boolean }): Promi
     result.perUnitScores[d.unit] = (result.perUnitScores[d.unit] ?? 10) - 1;
   }
 
-  // Persist evidence (copies artifacts into .spear/rounds/{N}/evidence/)
-  await ensureRoundDir(round, cwd);
-  const persisted = await persistEvidence(round, evidence, cwd);
+  await ensureRoundDir(slug, round, cwd);
+  const persisted = await persistEvidence(slug, round, evidence, cwd);
   result.evidence = persisted;
 
-  // Per-round assess.json
-  const dir = roundDir(round, cwd);
+  const dir = roundDir(slug, round, cwd);
   await fs.writeFile(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
 
-  // RESOLVE.md (and snapshot into round dir)
   const resolveMd = renderResolveMd(result);
-  await writeMd('resolve', resolveMd);
+  await writeMd(slug, 'resolve', resolveMd);
   await fs.writeFile(path.join(dir, 'RESOLVE.md'), resolveMd);
 
-  // Update state
   state.round = round;
   state.phase = result.converged ? 'converged' : 'resolve';
   state.lastAssess = {
@@ -99,7 +90,7 @@ export async function assessCmd(opts: { json?: boolean; fast?: boolean }): Promi
     durationMs: Date.now() - startedAt,
     timestamp,
   });
-  await writeState(state);
+  await writeState(slug, state);
 
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -168,7 +159,7 @@ function renderResolveMd(result: AssessResult): string {
   lines.push('## Evidence');
   lines.push('');
   lines.push('Mechanical checks (pass/fail with expected vs actual) and subjective pointers (artifacts to read).');
-  lines.push('Full list in `.spear/rounds/' + result.round + '/evidence.json`.');
+  lines.push(`Full list in \`evidence.json\` under the round dir.`);
   lines.push('');
   for (const ev of result.evidence) {
     const head = ev.kind === 'mechanical'
@@ -203,4 +194,13 @@ function reportTemplate(result: AssessResult): string {
     '',
     'When the rubric is satisfied, add `<spear-complete/>` on its own line above the report block to stop the loop.',
   ].join('\n');
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
+  }
 }

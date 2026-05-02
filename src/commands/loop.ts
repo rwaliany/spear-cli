@@ -1,56 +1,43 @@
 /**
  * spear loop — orchestrate the full pipeline.
  *
- * Validates scope → validates plan → executes → assesses → loops.
- * Stops on convergence, MAX_ROUNDS, fatal error, or `<spear-complete/>` in
- * the current RESOLVE.md.
- *
- * IMPORTANT: this CLI does NOT call an LLM. It enforces phase gates and
- * runs deterministic checks. Between rounds, an LLM (Claude Code via Bash)
- * is expected to read RESOLVE.md, apply fixes, and write a `<spear-report>`
- * block describing what was done. SPEAR parses the report on the next loop
- * call to update telemetry.
- *
- * Typical usage from Claude Code:
- *   $ spear loop --json --max-rounds 1
- *   # parse JSON, apply fixes via Edit tool, append <spear-report> to RESOLVE.md
- *   $ spear loop --json --max-rounds 1
- *   # repeat until exit code 0 (converged) or LLM signals done with <spear-complete/>
- *
- * Exit codes: 0 = converged or completed, 1 = execute failure,
- *             2 = open defects, 3 = max rounds exhausted
+ * Validates → executes → assesses → loops. Stops on convergence, MAX_ROUNDS,
+ * fatal error, or `<spear-complete/>` in the current RESOLVE.md.
  */
 import { promises as fs } from 'fs';
 import path from 'path';
 import kleur from 'kleur';
-import { ensureRoundDir, readMd, readState, writeState } from '../state.js';
-import { getAdapter } from '../adapters/index.js';
+import {
+  ensureRoundDir,
+  readMd,
+  readState,
+  resolveSlug,
+  roundDir,
+  writeState,
+} from '../state.js';
+import { buildContext, getAdapter } from '../adapters/index.js';
 import { hasCompleteSignal, isBlocked, parseReport } from '../report.js';
 import { persistEvidence } from '../evidence.js';
 import type { AssessResult, SpearReport } from '../types.js';
 
-export async function loopCmd(opts: { maxRounds?: string; json?: boolean }): Promise<void> {
+export async function loopCmd(opts: { maxRounds?: string; json?: boolean; name?: string }): Promise<void> {
+  const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
-  const state = await readState();
+  const state = await readState(slug);
   if (!state) {
-    console.error(kleur.red('✗ No SPEAR project found.'));
+    console.error(kleur.red(`✗ No SPEAR project "${slug}" found.`));
     process.exit(1);
   }
 
-  // Honor an explicit <spear-complete/> in the current RESOLVE.md before
-  // doing any work. This lets the LLM stop the loop at any time even if
-  // mechanical defects remain (e.g., known-unfixable, deferred).
-  const existingResolve = await readMd('resolve');
+  const existingResolve = await readMd(slug, 'resolve');
   if (existingResolve && hasCompleteSignal(existingResolve)) {
     state.phase = 'converged';
     state.completedAt = new Date().toISOString();
-    await writeState(state);
+    await writeState(slug, state);
     report({ phase: 'converged', round: state.round, success: true, completed: 'user-signaled' }, opts);
     return;
   }
 
-  // If the prior RESOLVE.md has a <spear-report>, persist its data into state
-  // before this iteration so the runner / status can surface BLOCKERS etc.
   if (existingResolve) {
     const r = parseReport(existingResolve);
     if (r) applyReportToState(state, r);
@@ -58,32 +45,30 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean }): Pro
 
   const cap = opts.maxRounds ? parseInt(opts.maxRounds, 10) : state.maxRounds;
   const adapter = getAdapter(state.type);
+  const ctx = buildContext(slug, state.type, cwd);
 
   for (let i = 0; i < cap; i++) {
     const roundStart = Date.now();
 
-    // Execute
-    const ex = await adapter.execute(cwd);
+    const ex = await adapter.execute(ctx);
     if (!ex.success) {
       state.failureReason = ex.steps.find((s) => !s.success)?.error ?? 'execute failed';
-      await writeState(state);
+      await writeState(slug, state);
       report({ phase: 'execute', round: state.round, success: false, ex }, opts);
       process.exit(1);
     }
     state.failureReason = undefined;
 
-    // Assess
-    const { defects, evidence } = await adapter.assess(cwd, { fast: false });
+    const { defects, evidence } = await adapter.assess(ctx, { fast: false });
     const round = state.round + 1;
     const timestamp = new Date().toISOString();
 
-    // Stuck detection
     const prevCount = state.lastRoundDefectCount;
     const stuck = prevCount !== undefined && prevCount === defects.length && round > 1 && defects.length > 0;
     const stuckSince = stuck ? state.stuckSince ?? round - 1 : undefined;
 
-    await ensureRoundDir(round, cwd);
-    const persisted = await persistEvidence(round, evidence, cwd);
+    await ensureRoundDir(slug, round, cwd);
+    const persisted = await persistEvidence(slug, round, evidence, cwd);
 
     const result: AssessResult = {
       round,
@@ -97,8 +82,7 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean }): Pro
       stuckSince,
     };
 
-    // Persist per-round assess.json
-    const dir = path.join(cwd, '.spear', 'rounds', String(round));
+    const dir = roundDir(slug, round, cwd);
     await fs.writeFile(path.join(dir, 'assess.json'), JSON.stringify(result, null, 2) + '\n');
 
     state.round = round;
@@ -119,13 +103,13 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean }): Pro
 
     if (defects.length === 0) {
       state.phase = 'converged';
-      await writeState(state);
+      await writeState(slug, state);
       report({ phase: 'converged', round, success: true, evidenceCount: persisted.length }, opts);
       return;
     }
 
     state.phase = 'resolve';
-    await writeState(state);
+    await writeState(slug, state);
     report(
       {
         phase: 'resolve',
@@ -142,7 +126,7 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean }): Pro
   }
 
   state.phase = 'resolve';
-  await writeState(state);
+  await writeState(slug, state);
   report({ phase: 'resolve', round: state.round, exhausted: true }, opts);
   process.exit(3);
 }
@@ -155,7 +139,6 @@ function applyReportToState(state: NonNullable<Awaited<ReturnType<typeof readSta
     state.lastAssess.progress = r.progress;
   }
   if (r.completed !== undefined && state.lastAssess) {
-    // crude: count comma-separated items as "fixed"
     state.lastAssess.fixed = r.completed.split(',').filter(Boolean).length || undefined;
   }
 }
@@ -184,5 +167,14 @@ function report(payload: Record<string, unknown>, opts: { json?: boolean }): voi
     console.log(kleur.dim('  → LLM: read RESOLVE.md, apply fixes, append <spear-report>, re-run `spear loop`.'));
   } else if (payload.phase === 'execute' && !payload.success) {
     console.log(kleur.red(`Round ${payload.round}: execute failed.`));
+  }
+}
+
+function resolveSlugOrExit(opts: { name?: string }): string {
+  try {
+    return resolveSlug(opts.name);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
+    process.exit(1);
   }
 }
