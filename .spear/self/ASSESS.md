@@ -95,6 +95,92 @@ HH. **Cross-platform path bug** — Code uses hardcoded `/` separators or POSIX-
 
 II. **Evidence-emission gap** — An adapter emits zero Evidence rows in some code path (e.g., when defects.length === 0, or when fast=true). The contract says every assess emits evidence; flag any path that doesn't.
 
+JJ. **SIGTERM mid-write** — Sending SIGTERM to a spear command mid-state-write leaves a partial state.json or stray .tmp files. Atomic-write contract must hold under signals.
+
+KK. **Concurrent assess race** — Two `spear assess` processes on the same slug racing for state.json produce a corrupted file. Atomic-write rename-into-place must remain consistent under contention.
+
+LL. **Reserved filesystem names** — Slug matches a Windows reserved name (CON, PRN, AUX, NUL, COM1..9, LPT1..9). Should reject on Windows; not blocking on macOS/Linux.
+
+MM. **Version drift** — `spear --version` doesn't match `package.json` version field. Single source of truth required.
+
+NN. **Round-dir cleanup** — After very many rounds, old rounds/ accumulate without a cleanup mechanism. Acceptable for v0.2 (history is the value); revisit if disk pressure becomes real.
+
+OO. **State-from-future-version** — Reading a state.json written by a future spear version with new fields. Should preserve unknown fields on round-trip (or document migration policy).
+
+PP. **Case-insensitive slug collision** — `spear init blog mypost` then `spear init blog MyPost` on a case-insensitive filesystem. Second call should detect collision.
+
+QQ. **Invalid type to init** — `spear init not-a-real-type` should reject with "Unknown type" + valid list.
+
+RR. **--help missing on a command** — A registered command's `--help` returns no Usage: line or no description. Every command must self-document.
+
+SS. **Round counter divergence** — After parallel assesses, state.round ends up negative or wildly out of bounds.
+
+TT. **Path traversal in slug** — Slug containing `../`, `/`, leading `.`, or absolute path. Validator must reject with no filesystem write outside `.spear/<slug>/`.
+
+UU. **Symlinked state.json** — Replacing state.json with a symlink to an external file. Atomic write must either follow the symlink or replace it consistently.
+
+VV. **--force overwrite semantics** — `spear init <type> <name> --force` doesn't actually overwrite, OR overwrites without --force. Must be opt-in destructive.
+
+WW. **Re-assess on converged** — Running assess on a project where state.phase = 'converged'. Round counter advances; no crash.
+
+XX. **Runner with zero projects** — `spear runner --once` in a directory with no `.spear/` should error cleanly.
+
+YY. **Runner JSON output shape** — `spear runner --once --json` must produce a parseable JSON document with a loops array.
+
+ZZ. **Long slug name** — A 100+ character slug name should work end-to-end (or be rejected with a clear error if there's a length limit).
+
+AAA. **Negative round number in state.json** — Manually edited state with `round: -5` should display without crash.
+
+BBB. **Huge round number with no rounds dirs** — `round: 99999` but no `rounds/N/` exists; resolve should still render gracefully.
+
+CCC. **Invalid phase value** — `phase: 'garbage'` in state.json. Phase-gates should treat unknown phases conservatively (refuse downstream commands).
+
+DDD. **Invalid type in state.json** — Type that doesn't match a registered adapter. `getAdapter()` must throw a clear error.
+
+EEE. **History overflow** — A pre-bloated history array (50+ entries) gets capped at 10 on next assess (slice(-9) + push).
+
+FFF. **Corrupt evidence.json** — A malformed evidence.json in a round dir. Resolve must recover (treat as empty) without crashing.
+
+GGG. **Missing assess.json in round dir** — Round dir exists but assess.json deleted. Resolve --json must remain valid.
+
+HHH. **Empty .spear/ directory** — `.spear/` exists but contains no slug subdirs. List should error cleanly with "No SPEAR projects".
+
+III. **Stray non-dir under .spear/** — A regular file directly under `.spear/`. Listing must ignore it.
+
+JJJ. **Major-version stale deps** — `npm outdated` reports major-version drift. Document as known-acceptable per release; revisit before the next minor.
+
+KKK. **Performance under load** — A 20K-word draft assesses in seconds, not minutes. No O(N²) regressions in scanning logic.
+
+LLL. **Many slugs per repo** — 50+ slugs in one repo: list, runner, status all complete in seconds.
+
+MMM. **Sequential rounds drift** — Running assess 30+ times sequentially: rounds dir accumulates correctly; history capped; no state corruption.
+
+NNN. **Large evidence list rendering** — Resolve with 200+ evidence rows renders in < 3 seconds.
+
+OOO. **FD leak** — 200 sequential commands without errors. Proxy for file-descriptor leak detection.
+
+PPP. **Mixed-encoding SCOPE.md** — Unicode + emoji + tabs + CRLF accepted by the validator without truncation.
+
+QQQ. **npm pack tarball shape** — `npm pack` produces a tarball with dist/ + templates/ + README + LICENSE; excludes node_modules + .spear. Tarball installs and runs.
+
+RRR. **Locale-dependent sort** — `LC_ALL` variations don't break list/runner sort order.
+
+SSS. **Subdirectory invocation** — `spear status` from a subdirectory of the repo doesn't auto-walk-up (cwd is the contract).
+
+TTT. **HOME unset** — `spear config list` with `$HOME` unset shouldn't crash.
+
+UUU. **--help format consistency** — Every command's --help has Usage: line + description + Options section.
+
+VVV. **Deck adapter init** — `spear init deck` creates the expected workspace/deck/ scaffold + starter package.json.
+
+WWW. **Deck adapter execute** — A minimal pptxgenjs build.js produces a valid .pptx + per-slide JPEGs via LibreOffice + pdftoppm pipeline within 30 seconds.
+
+XXX. **Deck render output** — Each rendered JPEG ≥ 1KB (not blank).
+
+YYY. **Deck assess evidence** — Per-slide render evidence (mechanical, with sha256) + per-slide subjective rubric pointers; hash matches the file.
+
+ZZZ. **Deck per-round artifact copy** — Round dir's evidence/ contains copies of all rendered JPEGs.
+
 ## Convergence
 
 PASS when every metric 10/10 AND zero open lettered failure modes AND `<spear-complete/>` signal in RESOLVE.md.
