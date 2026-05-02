@@ -253,8 +253,15 @@ echo "$LOOP_OUT" | grep -q "user-signaled" && ko "inline mention false-triggered
 
 echo "" >> "$C/.spear/blog/RESOLVE.md"
 echo "<spear-complete/>" >> "$C/.spear/blog/RESOLVE.md"
-(cd "$C" && run loop --max-rounds 5 >/dev/null 2>&1); CE=$?
+# Synthetic test — bypass the rubber-stamp guard which correctly fires on round-1 self-completion
+(cd "$C" && run loop --max-rounds 5 --allow-fast-convergence >/dev/null 2>&1); CE=$?
 [ $CE -eq 0 ] && ok "<spear-complete/> on own line stops loop (exit 0)" || ko "complete signal exit=$CE"
+
+# Anti-rubber-stamp guard: same project, no --allow-fast-convergence, should refuse
+# (need to revert the converged state first by clearing completedAt)
+node -e "const fs=require('fs'); const p='$C/.spear/blog/state.json'; const s=JSON.parse(fs.readFileSync(p)); delete s.completedAt; s.phase='resolve'; fs.writeFileSync(p, JSON.stringify(s))"
+GUARD_OUT=$(cd "$C" && run loop --max-rounds 5 2>&1 || true)
+echo "$GUARD_OUT" | grep -q "Rubber-stamp guard" && ok "rubber-stamp guard refuses round-1 self-completion without --allow-fast-convergence" || ko "rubber-stamp guard didn't fire"
 
 # ---------------------------------------------------------------------------
 section "12. Image + config error paths"
@@ -324,7 +331,55 @@ LIST_JSON=$(cd "$M" && run list --json 2>&1)
 echo "$LIST_JSON" | grep -q '"projects"' && ok "list --json emits structured rows" || ko "list JSON malformed"
 
 # ---------------------------------------------------------------------------
-section "15. Dogfood — spear init code self on spear-cli itself"
+section "15. Approval gates (--gated + spear approve <phase> + --skip-approval)"
+# ---------------------------------------------------------------------------
+GATED="$TMP/gated"
+mkdir -p "$GATED"
+(cd "$GATED" && run init blog post --gated >/dev/null 2>&1)
+GATED_FLAG=$(node -e "console.log(require('$GATED/.spear/post/state.json').gated)")
+[ "$GATED_FLAG" = "true" ] && ok "init --gated sets state.gated = true" || ko "gated flag not persisted (got $GATED_FLAG)"
+
+# Fill SCOPE so it passes
+printf '%s\n' "$FILLED_SCOPE" > "$GATED/.spear/post/SCOPE.md"
+(cd "$GATED" && run scope >/dev/null 2>&1) && ok "spear scope works in gated project (no upstream gate)" || ko "scope broke in gated"
+
+# spear plan should refuse: no scope approval yet
+sed -i.bak 's/\[ \] User confirmed/[x] User confirmed/g' "$GATED/.spear/post/PLAN.md" && rm -f "$GATED/.spear/post/PLAN.md.bak"
+PLAN_OUT=$(cd "$GATED" && run plan 2>&1 || true)
+echo "$PLAN_OUT" | grep -q 'requires approval of "scope"' && ok "gated: plan refuses without spear approve scope" || ko "gated: plan did not refuse"
+
+# spear approve scope → plan now works
+(cd "$GATED" && run approve scope >/dev/null 2>&1)
+[ -f "$GATED/.spear/post/.approvals/scope.json" ] && ok "spear approve scope wrote .approvals/scope.json" || ko "approval file missing"
+(cd "$GATED" && run plan >/dev/null 2>&1) && ok "gated: plan succeeds after approve scope" || ko "plan failed after approval"
+
+# execute should refuse without approve plan
+mkdir -p "$GATED/.spear/post/workspace" && echo "# stub" > "$GATED/.spear/post/workspace/draft.md"
+EXEC_OUT=$(cd "$GATED" && run execute 2>&1 || true)
+echo "$EXEC_OUT" | grep -q 'requires approval of "plan"' && ok "gated: execute refuses without spear approve plan" || ko "gated: execute did not refuse"
+
+# --skip-approval should bypass
+(cd "$GATED" && run execute --skip-approval >/dev/null 2>&1) && ok "--skip-approval bypasses the gate" || ko "--skip-approval failed"
+
+# spear approve --list shows what's approved
+LIST_OUT=$(cd "$GATED" && run approve --list 2>&1)
+echo "$LIST_OUT" | grep -q "✓ scope" && ok "spear approve --list shows recorded approvals" || ko "approve --list broken"
+
+# spear approve --revoke removes
+(cd "$GATED" && run approve scope --revoke >/dev/null 2>&1)
+[ ! -f "$GATED/.spear/post/.approvals/scope.json" ] && ok "spear approve --revoke removes the approval file" || ko "revoke didn't remove file"
+
+# Non-gated project: gates are no-ops
+NONGATED="$TMP/nongated"
+mkdir -p "$NONGATED"
+(cd "$NONGATED" && run init blog post >/dev/null 2>&1)
+printf '%s\n' "$FILLED_SCOPE" > "$NONGATED/.spear/post/SCOPE.md"
+sed -i.bak 's/\[ \] User confirmed/[x] User confirmed/g' "$NONGATED/.spear/post/PLAN.md" && rm -f "$NONGATED/.spear/post/PLAN.md.bak"
+(cd "$NONGATED" && run scope >/dev/null 2>&1)
+(cd "$NONGATED" && run plan >/dev/null 2>&1) && ok "ungated project: plan runs without approve (back-compat)" || ko "ungated: plan broke"
+
+# ---------------------------------------------------------------------------
+section "16. Dogfood — spear init code self on spear-cli itself"
 # ---------------------------------------------------------------------------
 DF="$TMP/dogfood-spear-cli"
 cp -r "$REPO_ROOT" "$DF"

@@ -32,7 +32,7 @@ const SPEC_FILES: Array<{ name: 'scope' | 'plan' | 'assess' | 'resolve'; file: s
   { name: 'resolve', file: 'RESOLVE.md' },
 ];
 
-export async function initCmd(type: string, name: string | undefined, opts: { force?: boolean }): Promise<void> {
+export async function initCmd(type: string, name: string | undefined, opts: { force?: boolean; gated?: boolean }): Promise<void> {
   if (!VALID_TYPES.includes(type as ProjectType)) {
     console.error(kleur.red(`Unknown type: ${type}`));
     console.error(`Valid types: ${VALID_TYPES.join(', ')}`);
@@ -106,6 +106,7 @@ export async function initCmd(type: string, name: string | undefined, opts: { fo
     round: 0,
     phase: 'scope',
     maxRounds: 20,
+    gated: opts.gated || undefined,
   }, cwd);
 
   console.log();

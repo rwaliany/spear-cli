@@ -14,6 +14,7 @@ import path from 'path';
 import kleur from 'kleur';
 import {
   atomicWrite,
+  checkApprovalGate,
   ensureRoundDir,
   readState,
   resolveSlug,
@@ -25,13 +26,20 @@ import { buildContext, getAdapter } from '../adapters/index.js';
 import { persistEvidence } from '../evidence.js';
 import type { AssessResult } from '../types.js';
 
-export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string }): Promise<void> {
+export async function assessCmd(opts: { json?: boolean; fast?: boolean; name?: string; skipApproval?: boolean }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
   const startedAt = Date.now();
   const state = await readState(slug);
   if (!state) {
     console.error(kleur.red(`✗ No SPEAR project "${slug}" found.`));
+    process.exit(1);
+  }
+
+  try {
+    checkApprovalGate(slug, state, 'assess', !!opts.skipApproval);
+  } catch (e) {
+    console.error(kleur.red('✗ ' + (e as Error).message));
     process.exit(1);
   }
 

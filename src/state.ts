@@ -30,12 +30,20 @@ const SPEC_FILE: Record<SpecName, string> = {
   resolve: 'RESOLVE.md',
 };
 
+export type Phase = 'scope' | 'plan' | 'execute' | 'assess' | 'resolve' | 'converged';
+
 export interface SpearState {
   type: 'deck' | 'blog' | 'code' | 'generic';
   slug: string;
   round: number;
-  phase: 'scope' | 'plan' | 'execute' | 'assess' | 'resolve' | 'converged';
+  phase: Phase;
   maxRounds: number;
+  /**
+   * If true, phase commands require an explicit `spear approve <phase>` for
+   * the upstream phase before they will run. Use --skip-approval to bypass
+   * per-command. Default false for back-compat.
+   */
+  gated?: boolean;
   lastAssess?: {
     defectCount: number;
     evidenceCount?: number;
@@ -184,6 +192,91 @@ const PHASE_ORDER: SpearState['phase'][] = ['scope', 'plan', 'execute', 'assess'
  */
 export function phaseAtLeast(current: SpearState['phase'], required: SpearState['phase']): boolean {
   return PHASE_ORDER.indexOf(current) >= PHASE_ORDER.indexOf(required);
+}
+
+// ---------- approval gates ----------
+
+const APPROVABLE_PHASES: Phase[] = ['scope', 'plan', 'execute', 'assess'];
+
+export function approvalsDir(slug: string, cwd: string = process.cwd()): string {
+  return path.join(projectDir(slug, cwd), '.approvals');
+}
+
+export function approvalPath(slug: string, phase: Phase, cwd: string = process.cwd()): string {
+  return path.join(approvalsDir(slug, cwd), `${phase}.json`);
+}
+
+export function isApproved(slug: string, phase: Phase, cwd: string = process.cwd()): boolean {
+  return existsSync(approvalPath(slug, phase, cwd));
+}
+
+export async function writeApproval(slug: string, phase: Phase, cwd: string = process.cwd()): Promise<void> {
+  const dir = approvalsDir(slug, cwd);
+  await fs.mkdir(dir, { recursive: true });
+  const data = JSON.stringify({ phase, timestamp: new Date().toISOString() }, null, 2) + '\n';
+  const target = approvalPath(slug, phase, cwd);
+  const tmp = `${target}.tmp.${process.pid}`;
+  await fs.writeFile(tmp, data);
+  await fs.rename(tmp, target);
+}
+
+export async function clearApproval(slug: string, phase: Phase, cwd: string = process.cwd()): Promise<boolean> {
+  const target = approvalPath(slug, phase, cwd);
+  if (!existsSync(target)) return false;
+  await fs.unlink(target);
+  return true;
+}
+
+export function listApprovals(slug: string, cwd: string = process.cwd()): Phase[] {
+  const dir = approvalsDir(slug, cwd);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith('.json'))
+    .map((f) => f.replace('.json', '') as Phase)
+    .filter((p) => APPROVABLE_PHASES.includes(p))
+    .sort();
+}
+
+/**
+ * Phase requires upstream approval when state.gated = true. Returns the
+ * required upstream phase (or null if no approval required).
+ *
+ *   plan    requires approval of scope
+ *   execute requires approval of plan
+ *   assess  requires approval of execute
+ */
+export function requiredUpstreamApproval(forPhase: Phase): Phase | null {
+  switch (forPhase) {
+    case 'plan': return 'scope';
+    case 'execute': return 'plan';
+    case 'assess': return 'execute';
+    default: return null;
+  }
+}
+
+/**
+ * Throw a clear error if state.gated is true and the upstream phase has no
+ * approval recorded. Phase commands call this at the top to enforce the
+ * checkpoint discipline.
+ */
+export function checkApprovalGate(
+  slug: string,
+  state: SpearState,
+  forPhase: Phase,
+  skipApproval: boolean = false,
+  cwd: string = process.cwd(),
+): void {
+  if (!state.gated) return;
+  if (skipApproval) return;
+  const required = requiredUpstreamApproval(forPhase);
+  if (!required) return;
+  if (!isApproved(slug, required, cwd)) {
+    throw new Error(
+      `${forPhase} requires approval of "${required}" first. ` +
+        `Run \`spear approve ${required}${state.gated ? ` --name ${slug}` : ''}\` to record the checkpoint, ` +
+        `or pass --skip-approval to bypass for this run.`,
+    );
+  }
 }
 
 export async function ensureRoundDir(slug: string, round: number, cwd: string = process.cwd()): Promise<string> {

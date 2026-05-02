@@ -11,6 +11,7 @@ import { statusCmd } from './commands/status.js';
 import { runnerCmd } from './commands/runner.js';
 import { listCmd } from './commands/list.js';
 import { imageCmd } from './commands/image.js';
+import { approveCmd } from './commands/approve.js';
 import {
   configSetCmd,
   configGetCmd,
@@ -29,6 +30,7 @@ program
   .command('init <type> [name]')
   .description('Scaffold a SPEAR project at .spear/<name>/ (name defaults to type)')
   .option('-f, --force', 'overwrite existing canonical files')
+  .option('--gated', 'require `spear approve <phase>` between phase transitions (opt-in checkpoint discipline)')
   .action(initCmd);
 
 program
@@ -43,6 +45,7 @@ program
   .description('Validate PLAN.md exists and is approved')
   .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON status')
+  .option('--skip-approval', 'bypass the gated approval check (for --gated projects)')
   .action(planCmd);
 
 program
@@ -50,6 +53,7 @@ program
   .description('Run the artifact build (e.g., node build.js for decks)')
   .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON status')
+  .option('--skip-approval', 'bypass the gated approval check (for --gated projects)')
   .action(executeCmd);
 
 program
@@ -58,6 +62,7 @@ program
   .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('--json', 'emit JSON defect list')
   .option('--fast', 'mechanical checks only (skip subjective items deferred to LLM)')
+  .option('--skip-approval', 'bypass the gated approval check (for --gated projects)')
   .action(assessCmd);
 
 program
@@ -77,7 +82,18 @@ program
   .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
   .option('-r, --max-rounds <n>', 'iteration cap', '20')
   .option('--json', 'emit JSON per round')
+  .option('--skip-approval', 'bypass gated approval checks (for --gated projects)')
+  .option('--allow-fast-convergence', 'permit <spear-complete/> on round 1 with no fixes (rubber-stamp guard bypass)')
   .action(loopCmd);
+
+program
+  .command('approve [phase]')
+  .description('Record a checkpoint approval for a phase (scope|plan|execute|assess); used in --gated projects')
+  .option('-n, --name <slug>', 'pick a SPEAR project (auto-detected if only one)')
+  .option('--revoke', 'remove a previously recorded approval')
+  .option('--list', 'show which approvals are currently set')
+  .option('--json', 'emit JSON')
+  .action(approveCmd);
 
 program
   .command('status')

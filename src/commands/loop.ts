@@ -20,7 +20,7 @@ import { hasCompleteSignal, isBlocked, parseReport } from '../report.js';
 import { persistEvidence } from '../evidence.js';
 import type { AssessResult, SpearReport } from '../types.js';
 
-export async function loopCmd(opts: { maxRounds?: string; json?: boolean; name?: string }): Promise<void> {
+export async function loopCmd(opts: { maxRounds?: string; json?: boolean; name?: string; allowFastConvergence?: boolean; skipApproval?: boolean }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
   const cwd = process.cwd();
   const state = await readState(slug);
@@ -31,6 +31,23 @@ export async function loopCmd(opts: { maxRounds?: string; json?: boolean; name?:
 
   const existingResolve = await readMd(slug, 'resolve');
   if (existingResolve && hasCompleteSignal(existingResolve)) {
+    // Anti-rubber-stamp guard: refuse <spear-complete/> when state suggests
+    // self-rubber-stamping (round 1 with reported defects, zero fixes, or a
+    // monotonic 10/10 history without any defect downturn). Bypass with
+    // --allow-fast-convergence for the legitimate "nothing to fix" case.
+    if (!opts.allowFastConvergence) {
+      const guard = rubberStampGuard(state, existingResolve);
+      if (guard.suspicious) {
+        console.error(kleur.red(`✗ Rubber-stamp guard: ${guard.reason}`));
+        console.error(
+          kleur.dim(
+            '  Run at least one assess round with concrete fixes before signaling complete, ' +
+              'or pass --allow-fast-convergence if you genuinely had no defects to address.',
+          ),
+        );
+        process.exit(1);
+      }
+    }
     state.phase = 'converged';
     state.completedAt = new Date().toISOString();
     await writeState(slug, state);
@@ -177,4 +194,50 @@ function resolveSlugOrExit(opts: { name?: string }): string {
     console.error(kleur.red('✗ ' + (e as Error).message));
     process.exit(1);
   }
+}
+
+/**
+ * Anti-rubber-stamp guard. Returns { suspicious: true, reason } if the current
+ * state + RESOLVE.md report look like the LLM declared convergence without
+ * doing real work. The "deck case" took 30+ rounds; a one-round self-completion
+ * with zero fixes is a smell.
+ *
+ * Heuristics:
+ *   1. round === 1 AND latest spear-report shows DEFECTS_FIXED: 0
+ *   2. lastRoundDefectCount > 0 AND round === 1 (defects reported, none fixed)
+ *   3. history is monotonic 0 defects from round 1 with no defect-trend evidence
+ *
+ * Bypass with --allow-fast-convergence (or simply add concrete fixes and re-loop).
+ */
+function rubberStampGuard(
+  state: NonNullable<Awaited<ReturnType<typeof readState>>>,
+  resolveMd: string,
+): { suspicious: boolean; reason: string } {
+  const report = parseReport(resolveMd);
+
+  // Round-1 self-completion with reported defects
+  if (state.round <= 1 && (state.lastAssess?.defectCount ?? 0) > 0) {
+    return {
+      suspicious: true,
+      reason: `round ${state.round} convergence with ${state.lastAssess?.defectCount} defect(s) reported by assess`,
+    };
+  }
+
+  // Round-1 self-completion with DEFECTS_FIXED: 0 (or absent)
+  if (state.round <= 1 && report) {
+    const fixedField = report.extras?.DEFECTS_FIXED?.trim();
+    const fixedNum = fixedField ? parseInt(fixedField, 10) : NaN;
+    const completedField = report.completed?.trim();
+    const completedItems = completedField
+      ? completedField.split(/[,;]/).map((s) => s.trim()).filter(Boolean).length
+      : 0;
+    if ((Number.isFinite(fixedNum) && fixedNum === 0) || completedItems === 0) {
+      return {
+        suspicious: true,
+        reason: `round 1 convergence with no concrete fixes reported (DEFECTS_FIXED=${fixedField ?? 'absent'}, COMPLETED items=${completedItems})`,
+      };
+    }
+  }
+
+  return { suspicious: false, reason: '' };
 }

@@ -3,10 +3,10 @@
  * Per-artifact-type adapters define exactly which commands to run.
  */
 import kleur from 'kleur';
-import { phaseAtLeast, readState, resolveSlug, writeState } from '../state.js';
+import { checkApprovalGate, phaseAtLeast, readState, resolveSlug, writeState } from '../state.js';
 import { buildContext, getAdapter } from '../adapters/index.js';
 
-export async function executeCmd(opts: { json?: boolean; name?: string }): Promise<void> {
+export async function executeCmd(opts: { json?: boolean; name?: string; skipApproval?: boolean }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
   const state = await readState(slug);
   if (!state) {
@@ -20,6 +20,13 @@ export async function executeCmd(opts: { json?: boolean; name?: string }): Promi
         `(both must pass) before \`spear execute\`.`,
       opts,
     );
+    return;
+  }
+
+  try {
+    checkApprovalGate(slug, state, 'execute', !!opts.skipApproval);
+  } catch (e) {
+    fail((e as Error).message, opts);
     return;
   }
 

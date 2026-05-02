@@ -4,10 +4,19 @@
  * enforces "PLAN.md must exist and be reviewed before Execute can start."
  */
 import kleur from 'kleur';
-import { readMd, readState, resolveSlug, writeState } from '../state.js';
+import { checkApprovalGate, readMd, readState, resolveSlug, writeState } from '../state.js';
 
-export async function planCmd(opts: { json?: boolean; name?: string }): Promise<void> {
+export async function planCmd(opts: { json?: boolean; name?: string; skipApproval?: boolean }): Promise<void> {
   const slug = resolveSlugOrExit(opts);
+  const state = await readState(slug);
+  if (state) {
+    try {
+      checkApprovalGate(slug, state, 'plan', !!opts.skipApproval);
+    } catch (e) {
+      console.error(kleur.red('✗ ' + (e as Error).message));
+      process.exit(1);
+    }
+  }
   const md = await readMd(slug, 'plan');
   if (md === null) {
     fail(`PLAN.md not found for "${slug}".`, opts, 'Have the LLM write the plan, then re-run.');
@@ -23,7 +32,6 @@ export async function planCmd(opts: { json?: boolean; name?: string }): Promise<
     approved,
   };
 
-  const state = await readState(slug);
   if (state && report.valid) {
     state.phase = 'execute';
     await writeState(slug, state);
